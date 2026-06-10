@@ -530,13 +530,28 @@ def cmd_web(args):
     web_config = config.get("web", {})
     host = web_config.get("host", "127.0.0.1")
     port = web_config.get("port", 8000)
+    allow_public = web_config.get("allow_public_bind", False)
+
+    # 安全限制：默认只允许 127.0.0.1
+    is_public = host in ("0.0.0.0", "::", "") or not host.startswith("127.")
+    if is_public and not allow_public:
+        print("[ERROR] 安全限制: web.host 设置为公网地址但未显式确认")
+        print("[ERROR] 如需公网监听，请在 config.yaml 中设置:")
+        print("[ERROR]   web:")
+        print("[ERROR]     allow_public_bind: true")
+        print("[ERROR] Dashboard 默认无认证，公网暴露有安全风险")
+        return
+
+    if is_public and allow_public:
+        print("[WARN] ⚠️  当前 Web Dashboard 监听在公网地址，且无用户认证")
+        print("[WARN] ⚠️  不建议直接暴露公网，建议通过 SSH 隧道或 VPN 访问")
+        print("[WARN] ⚠️  如需关闭此警告，请设置 web.allow_public_bind: false")
 
     from web.server import create_app
     import uvicorn
 
     app = create_app(db_path, config)
     print(f"[INFO] Web Dashboard 启动: http://{host}:{port}")
-    print("[INFO] 默认仅监听 127.0.0.1，不直接暴露公网")
     print("[INFO] 按 Ctrl+C 停止")
     uvicorn.run(app, host=host, port=port, log_level="info")
 

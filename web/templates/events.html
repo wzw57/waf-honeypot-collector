@@ -52,7 +52,7 @@
 <nav><ul class="pagination pagination-sm">
   {% for p in range(1, total_pages + 1) %}
   <li class="page-item {{ 'active' if p == page else '' }}">
-    <a class="page-link" href="?page={{ p }}{% if source_filter %}&source={{ source_filter }}{% endif %}{% if attack_type_filter %}&attack_type={{ attack_type_filter }}{% endif %}{% if ip_filter %}&ip={{ ip_filter }}{% endif %}">{{ p }}</a>
+    <a class="page-link" href="?{{ qs_prefix }}page={{ p }}">{{ p }}</a>
   </li>
   {% endfor %}
 </ul></nav>

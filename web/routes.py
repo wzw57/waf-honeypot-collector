@@ -3,20 +3,19 @@ Web Dashboard — 路由定义。
 """
 
 import json
-from datetime import datetime, timezone
+import re
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
 from app.db import (
     get_connection,
     get_extended_stats,
     get_events_by_ip,
     get_iocs,
-    get_latest_hfish_events,
-    get_latest_normalized_events,
-    get_latest_safeline_logs,
     get_profile_by_ip,
     get_profile_stats,
     get_top_ips,
@@ -25,24 +24,30 @@ from app.logger import get_logger
 
 logger = get_logger("web_router")
 
-from pathlib import Path
-
-from fastapi.templating import Jinja2Templates
-
 router = APIRouter()
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
+# IP 地址校验正则（IPv4、IPv6 常见格式）
+IP_RE = re.compile(r"^[a-fA-F0-9:.]+$")
+
 
 def _tpl():
-    """获取 Jinja2Templates 实例。"""
     return _templates
 
 
 def _get_db(request: Request) -> str:
-    """从 request state 获取数据库路径。"""
     return request.app.state.db_path
+
+
+def _validate_ip(ip: str) -> str:
+    """校验 IP 参数合法性。"""
+    if len(ip) > 64:
+        raise HTTPException(status_code=400, detail="IP 参数过长")
+    if not IP_RE.match(ip):
+        raise HTTPException(status_code=400, detail="IP 格式非法")
+    return ip
 
 
 # ========== 页面路由 ==========
@@ -75,10 +80,10 @@ async def index(request: Request):
 @router.get("/events", response_class=HTMLResponse)
 async def events_page(
     request: Request,
-    source: Optional[str] = None,
-    attack_type: Optional[str] = None,
-    ip: Optional[str] = None,
-    page: int = Query(1, ge=1),
+    source: Optional[str] = Query(None, pattern="^(safeline|hfish)?$"),
+    attack_type: Optional[str] = Query(None, max_length=100),
+    ip: Optional[str] = Query(None, max_length=64),
+    page: int = Query(1, ge=1, le=10000),
 ):
     """事件列表页。"""
     db = _get_db(request)
@@ -114,11 +119,23 @@ async def events_page(
 
     total_pages = max(1, (total + limit - 1) // limit)
 
-    # 获取筛选选项
     cursor.execute(
-        "SELECT DISTINCT attack_type FROM normalized_events WHERE attack_type IS NOT NULL AND attack_type != '' ORDER BY attack_type"
+        "SELECT DISTINCT attack_type FROM normalized_events "
+        "WHERE attack_type IS NOT NULL AND attack_type != '' ORDER BY attack_type"
     )
     attack_types = [r["attack_type"] for r in cursor.fetchall()]
+
+    # 构建分页 query string
+    qs_parts = []
+    if source:
+        qs_parts.append(f"source={source}")
+    if attack_type:
+        from urllib.parse import quote
+        qs_parts.append(f"attack_type={quote(attack_type)}")
+    if ip:
+        qs_parts.append(f"ip={ip}")
+    qs_base = "&".join(qs_parts)
+    qs_prefix = f"{qs_base}&" if qs_base else ""
 
     ctx = {
         "request": request,
@@ -130,6 +147,7 @@ async def events_page(
         "attack_type_filter": attack_type or "",
         "ip_filter": ip or "",
         "attack_types": attack_types,
+        "qs_prefix": qs_prefix,
     }
     return _tpl().TemplateResponse(request, "events.html", ctx)
 
@@ -154,6 +172,7 @@ async def top_ip_page(request: Request, sort: str = "total_count"):
 @router.get("/profile/{ip}", response_class=HTMLResponse)
 async def ip_detail_page(request: Request, ip: str):
     """IP 详情。"""
+    _validate_ip(ip)
     db = _get_db(request)
     profile = get_profile_by_ip(db, ip)
     events = get_events_by_ip(db, ip, limit=200)
@@ -164,7 +183,6 @@ async def ip_detail_page(request: Request, ip: str):
         ctx = {"request": request, "ip": ip, "not_found": True}
         return _tpl().TemplateResponse(request, "ip_detail.html", ctx)
 
-    # 解析 JSON 字段
     for field in ("attack_types", "protocols", "tags"):
         val = profile.get(field)
         if val and isinstance(val, str):
@@ -185,16 +203,14 @@ async def ip_detail_page(request: Request, ip: str):
 
 
 @router.get("/iocs", response_class=HTMLResponse)
-async def iocs_page(request: Request, ioc_type: Optional[str] = None):
+async def iocs_page(request: Request, ioc_type: Optional[str] = Query(None, max_length=64)):
     """IOC 列表。"""
     db = _get_db(request)
     items = get_iocs(db, ioc_type=ioc_type, limit=200)
 
     conn = get_connection(db)
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT DISTINCT ioc_type FROM iocs ORDER BY ioc_type"
-    )
+    cursor.execute("SELECT DISTINCT ioc_type FROM iocs ORDER BY ioc_type")
     types = [r["ioc_type"] for r in cursor.fetchall()]
 
     ctx = {
@@ -229,8 +245,6 @@ async def trends_page(request: Request):
     db = _get_db(request)
     conn = get_connection(db)
     cursor = conn.cursor()
-
-    # 按日期统计
     cursor.execute("""
         SELECT substr(event_time, 1, 10) as day, source, COUNT(*) as cnt
         FROM normalized_events
@@ -278,6 +292,7 @@ async def high_risk_page(request: Request):
 @router.get("/report/{ip}", response_class=HTMLResponse)
 async def report_view_page(request: Request, ip: str):
     """报告在线查看。"""
+    _validate_ip(ip)
     db = _get_db(request)
     from reports.markdown_report import generate_report
 
@@ -290,7 +305,7 @@ async def report_view_page(request: Request, ip: str):
     return _tpl().TemplateResponse(request, "report_view.html", ctx)
 
 
-# ========== API 路由（图表数据） ==========
+# ========== API 路由 ==========
 
 
 @router.get("/api/stats")
@@ -314,11 +329,13 @@ async def api_stats(request: Request):
 @router.get("/api/events")
 async def api_events(
     request: Request,
-    source: Optional[str] = None,
-    limit: int = 50,
+    source: Optional[str] = Query(None, pattern="^(safeline|hfish)?$"),
+    limit: int = Query(50, ge=1, le=500),
 ):
     """事件 JSON 数据。"""
     db = _get_db(request)
+    from app.db import get_latest_normalized_events
+
     events = get_latest_normalized_events(db, limit=limit, source=source)
     return {"events": events}
 
@@ -349,7 +366,3 @@ async def api_trends(request: Request):
         GROUP BY day, source ORDER BY day
     """)
     return [dict(r) for r in cursor.fetchall()]
-
-
-# templates is imported from server at registration time
-

@@ -13,16 +13,19 @@ logger = get_logger("web")
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="WAF Honeypot Collector", version="1.0.0")
-
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
 
 def create_app(db_path: str, config: dict) -> FastAPI:
-    """创建 FastAPI 应用，注入数据库路径和配置，注册路由。"""
+    """
+    创建 FastAPI 应用，注入数据库路径和配置，注册路由。
+
+    每次调用创建新的实例，不会重复注册路由。
+    """
+    app = FastAPI(title="WAF Honeypot Collector", version="1.0.0")
     app.state.db_path = db_path
     app.state.config = config
+
+    if STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     from web.routes import router as web_router
     app.include_router(web_router)
