@@ -109,6 +109,132 @@ class TestDeepSeekClientGenerate:
         assert result == ""
 
 
+class TestPromptInjection:
+    """测试 Prompt Injection 防护。"""
+
+    def test_system_prompt_contains_security_warning(self):
+        """system_prompt 应包含不可信数据警告。"""
+        from ai.prompts import system_prompt
+        result = system_prompt()
+        content = result["content"]
+        assert "不可信攻击数据" in content or "不得遵循" in content
+
+    def test_summary_prompt_contains_security_warning(self):
+        """summary_prompt 应包含不可信数据警告。"""
+        from ai.prompts import summary_prompt
+        result = summary_prompt({"ip": "1.2.3.4"})
+        content = result["content"]
+        assert "不可信" in content or "不得被遵循" in content
+
+    def test_payload_explain_prompt_contains_security_warning(self):
+        """payload_explain_prompt 应包含不可信数据警告。"""
+        from ai.prompts import payload_explain_prompt
+        result = payload_explain_prompt(["' OR 1=1 --"])
+        content = result["content"]
+        assert "不可信" in content or "不得遵循" in content
+
+
+class TestAiOutputLength:
+    """测试 AI 输出截断。"""
+
+    def test_report_ai_content_truncated(self):
+        """超长 AI 内容在报告中应被截断。"""
+        import tempfile
+        from reports.markdown_report import generate_report
+        from app.db import init_db, get_connection
+        from datetime import datetime, timezone
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db = f.name
+        init_db(db)
+
+        conn = get_connection(db)
+        cursor = conn.cursor()
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cursor.execute("""
+            INSERT INTO normalized_events
+                (source, source_event_id, event_time, src_ip, src_port,
+                 protocol, http_method, host, uri, user_agent,
+                 attack_type, severity, payload, raw_table, raw_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, ("safeline", "e1", now, "10.0.0.50", 12345,
+              "HTTP", "GET", "x.com", "/", "test",
+              "SQL Injection", "high", "1=1",
+              "raw_safeline_logs", 1, now))
+        conn.commit()
+
+        from analyzers.profiler import build_all_profiles
+        build_all_profiles(db)
+
+        # with_ai=True but no API Key → AI 内容为空 → 不触发截断
+        report = generate_report(db, "10.0.0.50", with_ai=True)
+        assert report is not None
+        # 如果 AI 内容为空，不应有截断标记
+        assert "内容已截断" not in report
+
+        import os
+        os.unlink(db)
+
+
+class TestStableProfileCache:
+    """测试缓存 key 使用的稳定字段。"""
+
+    def test_stable_profile_extracts_stable_fields(self):
+        """_stable_profile 应只包含稳定字段，排除 updated_at/last_event_time。"""
+        from ai.deepseek_client import DeepSeekClient
+
+        profile = {
+            "src_ip": "1.2.3.4",
+            "risk_score": 85,
+            "risk_level": "critical",
+            "tags": '["高危"]',
+            "total_count": 100,
+            "attack_types": '{"SQL Injection": 5}',
+            "protocols": '{"HTTP": 10}',
+            "is_multi_source": 1,
+            "updated_at": "2026-06-10T12:00:00Z",
+            "last_event_time": "2026-06-10T11:00:00Z",
+        }
+        stable = DeepSeekClient._stable_profile(profile)
+        assert "src_ip" in stable
+        assert "risk_score" in stable
+        assert "updated_at" not in stable
+        assert "last_event_time" not in stable
+        assert stable["src_ip"] == "1.2.3.4"
+        assert stable["risk_score"] == 85
+
+    def test_stable_profile_cache_consistency(self):
+        """相同画像应生成相同缓存 key。"""
+        from ai.deepseek_client import DeepSeekClient
+
+        p1 = {"src_ip": "1.2.3.4", "risk_score": 50, "tags": '["a"]',
+              "total_count": 10, "attack_types": "{}", "protocols": "{}",
+              "is_multi_source": 0}
+        p2 = {"src_ip": "1.2.3.4", "risk_score": 50, "tags": '["a"]',
+              "total_count": 10, "attack_types": "{}", "protocols": "{}",
+              "is_multi_source": 0, "updated_at": "2026-06-10T12:00:00Z"}
+        s1 = DeepSeekClient._stable_profile(p1)
+        s2 = DeepSeekClient._stable_profile(p2)
+        assert s1 == s2
+
+
+class TestTagsSafety:
+    """测试 tags 解析安全性。"""
+
+    def test_safe_json_loads_for_tags(self):
+        """非法 tags JSON 应降级为空列表不崩溃。"""
+        from app.utils import safe_json_loads
+
+        result = safe_json_loads("not valid json", default=[])
+        assert result == []
+
+        result = safe_json_loads('["a", "b"]', default=[])
+        assert result == ["a", "b"]
+
+        result = safe_json_loads(None, default=[])
+        assert result == []
+
+
 class TestAiSummaryCli:
     """测试 ai-summary CLI 的降级行为。"""
 

@@ -474,17 +474,26 @@ def cmd_ai_summary(args):
     iocs = get_iocs(db_path, limit=100)
     ip_iocs = [i for i in iocs if i.get("src_ip") == ip]
 
+    from app.utils import safe_json_loads
     import json
     try:
         attack_types = json.loads(profile["attack_types"]) if profile.get("attack_types") else {}
     except (json.JSONDecodeError, TypeError):
         attack_types = {}
 
+    # 安全解析 tags（非法 JSON 降级为空列表）
+    raw_tags = profile.get("tags")
+    if isinstance(raw_tags, str):
+        parsed_tags = safe_json_loads(raw_tags, default=[])
+        tags_list = parsed_tags if isinstance(parsed_tags, list) else []
+    else:
+        tags_list = raw_tags or []
+
     ip_data = {
         "ip": ip,
         "risk_score": profile.get("risk_score", 0),
         "risk_level": profile.get("risk_level", "low"),
-        "tags": json.loads(profile["tags"]) if isinstance(profile.get("tags"), str) else (profile.get("tags") or []),
+        "tags": tags_list,
         "total_events": profile.get("total_count", 0),
         "safeline_events": profile.get("safeline_count", 0),
         "hfish_events": profile.get("hfish_count", 0),
@@ -522,12 +531,17 @@ def cmd_report(args):
     output = args.output
     all_ips = args.all
     with_ai = args.with_ai
+    deepseek_config = config.get("deepseek", {})
 
     from reports.markdown_report import generate_report, generate_all_reports
 
     if all_ips:
+        if with_ai and deepseek_config.get("enabled"):
+            print("[INFO] ⚠️  --all --with-ai 将对多个 IP 触发 AI 分析请求")
+            print("[INFO]    请确认 API Key 有效且已了解 Token 消耗和费用情况")
         out_dir = output or "reports/output"
-        count = generate_all_reports(db_path, output_dir=out_dir, with_ai=with_ai)
+        count = generate_all_reports(db_path, output_dir=out_dir, with_ai=with_ai,
+                                     deepseek_config=deepseek_config)
         print(f"[INFO] 已为 {count} 个 IP 生成报告，输出目录: {out_dir}")
         return
 
@@ -535,7 +549,8 @@ def cmd_report(args):
         print("[ERROR] 请指定 --ip 或使用 --all")
         return
 
-    report = generate_report(db_path, ip, with_ai=with_ai)
+    report = generate_report(db_path, ip, with_ai=with_ai,
+                             deepseek_config=deepseek_config)
 
     if not report:
         print(f"[INFO] IP {ip} 暂无数据，无法生成报告")

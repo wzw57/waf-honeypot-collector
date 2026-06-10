@@ -162,8 +162,11 @@ class DeepSeekClient:
         if not self.is_available():
             return ""
 
+        # 提取稳定字段作为缓存 key，避免 updated_at 等变化字段导致缓存失效
+        cache_input = self._stable_profile(profile)
+
         if cache_db_path:
-            cached = self._get_cached(cache_db_path, "remediation", profile)
+            cached = self._get_cached(cache_db_path, "remediation", cache_input)
             if cached is not None:
                 return cached
 
@@ -173,9 +176,23 @@ class DeepSeekClient:
         result = self.chat_completion(messages)
 
         if result and cache_db_path:
-            self._set_cached(cache_db_path, "remediation", profile, result)
+            self._set_cached(cache_db_path, "remediation", cache_input, result)
 
         return result or ""
+
+    @staticmethod
+    def _stable_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+        """从画像中提取稳定字段，用于缓存 key。"""
+        return {
+            "src_ip": profile.get("src_ip", ""),
+            "risk_score": profile.get("risk_score", 0),
+            "risk_level": profile.get("risk_level", "low"),
+            "tags": profile.get("tags", "[]"),
+            "total_count": profile.get("total_count", 0),
+            "attack_types": profile.get("attack_types", "{}"),
+            "protocols": profile.get("protocols", "{}"),
+            "is_multi_source": profile.get("is_multi_source", 0),
+        }
 
     def generate_payload_explain(self, payloads: List[str],
                                  cache_db_path: Optional[str] = None) -> str:

@@ -25,7 +25,8 @@ def _load_template():
     return env.get_template("ip_report.md.j2")
 
 
-def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str]:
+def generate_report(db_path, src_ip: str, with_ai: bool = False,
+                    deepseek_config: Optional[dict] = None) -> Optional[str]:
     """
     为指定 IP 生成完整 Markdown 报告。
 
@@ -33,6 +34,7 @@ def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str
         db_path: 数据库文件路径。
         src_ip: 攻击源 IP。
         with_ai: 是否使用 AI 辅助内容（Phase 5 启用）。
+        deepseek_config: DeepSeek 配置字典（传此参数可避免重新读取 config.yaml）。
 
     Returns:
         str|None: Markdown 报告字符串，IP 无数据时返回 None。
@@ -91,11 +93,14 @@ def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str
     if with_ai:
         try:
             from ai.deepseek_client import DeepSeekClient
-            from app.config import get_config as get_app_config
             import json as _json
 
-            cfg = get_app_config()
-            client = DeepSeekClient(cfg.get("deepseek", {}))
+            # 如果外部传入了 deepseek_config，优先使用（尊重 --config）
+            if deepseek_config is None:
+                from app.config import get_config as get_app_config
+                deepseek_config = get_app_config().get("deepseek", {})
+
+            client = DeepSeekClient(deepseek_config)
 
             if client.is_available():
                 # 构建 AI 输入
@@ -150,12 +155,19 @@ def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 构建 AI 章节
+    # 构建 AI 章节（截断防溢出）
+    MAX_AI_LENGTH = 2000
     ai_section = ""
     if ai_summary_text:
-        ai_section += f"\n## AI 辅助分析\n\n*以下内容由 AI 生成，仅供参考*\n\n{ai_summary_text}\n"
+        truncated = ai_summary_text[:MAX_AI_LENGTH]
+        if len(ai_summary_text) > MAX_AI_LENGTH:
+            truncated += "\n\n*（内容已截断）*"
+        ai_section += f"\n## AI 辅助分析\n\n*以下内容由 AI 生成，仅供参考*\n\n{truncated}\n"
     if ai_remediation_text:
-        ai_section += f"\n### AI 处置建议\n\n{ai_remediation_text}\n"
+        truncated = ai_remediation_text[:MAX_AI_LENGTH]
+        if len(ai_remediation_text) > MAX_AI_LENGTH:
+            truncated += "\n\n*（内容已截断）*"
+        ai_section += f"\n### AI 处置建议\n\n{truncated}\n"
 
     # 渲染模板
     template = _load_template()
@@ -180,7 +192,8 @@ def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str
 
 
 def generate_all_reports(db_path, output_dir: str = "reports/output",
-                         with_ai: bool = False) -> int:
+                         with_ai: bool = False,
+                         deepseek_config: Optional[dict] = None) -> int:
     """
     为所有有画像的 IP 生成报告。
 
@@ -202,7 +215,8 @@ def generate_all_reports(db_path, output_dir: str = "reports/output",
 
     count = 0
     for ip in ips:
-        report = generate_report(db_path, ip, with_ai=with_ai)
+        report = generate_report(db_path, ip, with_ai=with_ai,
+                                  deepseek_config=deepseek_config)
         if report:
             safe_name = ip.replace(".", "_").replace(":", "_")
             file_path = out_path / f"{safe_name}.md"
