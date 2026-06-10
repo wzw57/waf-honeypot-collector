@@ -196,6 +196,71 @@ python main.py web                            # 启动 Web（127.0.0.1:8000）
 
 ---
 
+## VPS 部署
+
+项目提供一键部署脚本，自动完成环境配置、systemd 服务注册和启动。
+
+### 快速部署
+
+```bash
+# 在目标 VPS 上克隆项目
+sudo mkdir -p /opt && sudo chown ubuntu:ubuntu /opt
+cd /opt
+git clone https://github.com/wzw57/waf-honeypot-collector.git
+cd waf-honeypot-collector
+
+# 一键部署（需要 sudo）
+bash scripts/deploy_vps.sh
+```
+
+部署脚本会自动：
+
+1. 安装 Python 依赖到 virtualenv
+2. 创建配置文件和环境变量文件
+3. 初始化 SQLite 数据库
+4. 注册并启动以下 systemd 服务
+
+| 服务 | 功能 | 状态 |
+|------|------|------|
+| `waf-honeypot-safeline` | SafeLine Syslog 接收 (UDP :1514) | ✅ 自动启动 |
+| `waf-honeypot-web` | Web Dashboard (127.0.0.1:8000) | ✅ 自动启动 |
+
+### 部署后操作
+
+```bash
+# 编辑配置和环境变量
+sudo vim /opt/waf-honeypot-collector/config.yaml
+sudo vim /etc/waf-honeypot-collector.env
+# 修改后需要重启对应服务
+sudo systemctl restart waf-honeypot-safeline
+sudo systemctl restart waf-honeypot-web
+
+# 查看状态
+systemctl status waf-honeypot-safeline --no-pager
+systemctl status waf-honeypot-web --no-pager
+
+# 查看日志
+journalctl -u waf-honeypot-safeline -f
+journalctl -u waf-honeypot-web -f
+```
+
+### 访问 Web Dashboard
+
+```bash
+# 通过 SSH 隧道访问（本地执行）
+ssh -L 8000:127.0.0.1:8000 ubuntu@YOUR_VPS_IP
+# 本地浏览器打开 http://127.0.0.1:8000
+```
+
+### 安全注意事项
+
+- 🛡️ **SafeLine 真实接入**需要云安全组和系统防火墙放行 **UDP 1514** 端口
+- 🛡️ **HFish** 未在部署脚本中自动启动，需单独配置后手动 `systemctl start waf-honeypot-hfish`
+- 🛡️ **Web Dashboard** 默认仅监听 `127.0.0.1`，不直接暴露公网
+- 🛡️ 编辑 `/etc/waf-honeypot-collector.env` 填入真实 Token / API Key
+
+---
+
 ## 项目结构
 
 ```
