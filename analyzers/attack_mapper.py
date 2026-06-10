@@ -24,8 +24,9 @@ def _word_match(val: str, text: str) -> bool:
     """
     pattern = _WORD_BOUNDARY_CACHE.get(val)
     if pattern is None:
+        # 使用 \b 单词边界，使 "exec" 在 "exec('id')" 中可匹配
         pattern = re.compile(
-            r"(?:^|[\s\-_/])(?:" + re.escape(val) + r")(?:$|[\s\-_/])",
+            r"\b" + re.escape(val) + r"\b",
             re.IGNORECASE,
         )
         _WORD_BOUNDARY_CACHE[val] = pattern
@@ -34,19 +35,18 @@ def _word_match(val: str, text: str) -> bool:
 # 映射规则: (条件, technique_id, technique_name, attack_behavior)
 # 条件按优先级从高到低排列，第一个匹配的生效
 MAPPING_RULES: List[Tuple[str, str, str, str]] = [
-    # 敏感文件探测（优先级高于通用扫描）
-    ("attack_type:sensitive file probe", "T1036", "Masquerading", "敏感文件探测"),
-    ("attack_type:sensitive file", "T1036", "Masquerading", "敏感文件探测"),
-
-    # 扫描探测
-    ("attack_type:scan", "T1595", "Active Scanning", "端口扫描/服务探测"),
+    # --- 扫描探测 / 敏感文件探测（T1595） ---
+    ("attack_type:scan", "T1595", "Active Scanning", "扫描探测"),
     ("attack_type:dirbust", "T1595", "Active Scanning", "目录扫描"),
     ("attack_type:directory scan", "T1595", "Active Scanning", "目录扫描"),
     ("attack_type:directory", "T1595", "Active Scanning", "目录扫描"),
+    ("attack_type:sensitive file probe", "T1595", "Active Scanning", "敏感文件探测"),
+    ("attack_type:sensitive file", "T1595", "Active Scanning", "敏感文件探测"),
     ("attack_type:probe", "T1595", "Active Scanning", "服务探测"),
     ("attack_type:探测", "T1595", "Active Scanning", "服务探测"),
 
-    # Web 漏洞利用
+    # --- Web 漏洞利用（T1190） ---
+    ("attack_type:path traversal", "T1190", "Exploit Public-Facing Application", "路径遍历"),
     ("attack_type:sql injection", "T1190", "Exploit Public-Facing Application", "SQL 注入攻击"),
     ("attack_type:sqli", "T1190", "Exploit Public-Facing Application", "SQL 注入攻击"),
     ("attack_type:xss", "T1190", "Exploit Public-Facing Application", "XSS 攻击"),
@@ -54,16 +54,12 @@ MAPPING_RULES: List[Tuple[str, str, str, str]] = [
     ("attack_type:command execution", "T1190", "Exploit Public-Facing Application", "命令执行"),
     ("attack_type:command", "T1190", "Exploit Public-Facing Application", "命令注入"),
     ("attack_type:file inclusion", "T1190", "Exploit Public-Facing Application", "文件包含"),
-    ("attack_type:lfi", "T1190", "Exploit Public-Facing Application", "本地文件包含"),
-    ("attack_type:rfi", "T1190", "Exploit Public-Facing Application", "远程文件包含"),
     ("attack_type:注入", "T1190", "Exploit Public-Facing Application", "注入攻击"),
     ("attack_type:ssrf", "T1190", "Exploit Public-Facing Application", "SSRF 攻击"),
     ("attack_type:xxe", "T1190", "Exploit Public-Facing Application", "XXE 攻击"),
     ("attack_type:webshell", "T1190", "Exploit Public-Facing Application", "Webshell 上传"),
-    ("attack_type:file upload", "T1190", "Exploit Public-Facing Application", "恶意文件上传"),
-    ("attack_type:csrf", "T1190", "Exploit Public-Facing Application", "CSRF 攻击"),
 
-    # 暴力破解
+    # --- 暴力破解（T1110 / T1110.001） ---
     ("attack_type:brute force", "T1110", "Brute Force", "暴力破解"),
     ("attack_type:bruteforce", "T1110", "Brute Force", "暴力破解"),
     ("protocol:SSH and attack_type:ssh", "T1110", "Brute Force", "SSH 暴力破解"),
@@ -74,24 +70,14 @@ MAPPING_RULES: List[Tuple[str, str, str, str]] = [
     ("attack_type:爆破", "T1110", "Brute Force", "暴力破解"),
     ("attack_type:weak password", "T1110", "Brute Force", "弱口令尝试"),
 
-    # 密码猜测
-    ("source:hfish and has_username", "T1110.001", "Password Guessing", "密码猜测"),
-    ("source:hfish and has_password", "T1110.001", "Password Guessing", "密码猜测"),
+    # HFish 凭据尝试优先映射到 Password Guessing
+    ("source:hfish and has_username", "T1110.001", "Password Guessing", "凭据猜测"),
+    ("source:hfish and has_password", "T1110.001", "Password Guessing", "凭据猜测"),
 
-    # 命令执行
-    ("payload:union", "T1059", "Command and Scripting Interpreter", "SQL 注入命令执行"),
+    # --- 命令执行（T1059, Payload 级别） ---
     ("payload:exec", "T1059", "Command and Scripting Interpreter", "命令执行"),
     ("payload:system", "T1059", "Command and Scripting Interpreter", "系统命令执行"),
     ("payload:passthru", "T1059", "Command and Scripting Interpreter", "命令执行"),
-    ("attack_type:command execution", "T1059", "Command and Scripting Interpreter", "命令执行"),
-
-    # 凭据尝试（HFish）
-    ("source:hfish and username:admin", "T1555", "Credentials from Password Stores", "管理员凭据尝试"),
-    ("source:hfish and has_username", "T1555", "Credentials from Password Stores", "凭据尝试"),
-
-    # 敏感文件探测
-    ("attack_type:sensitive file", "T1036", "Masquerading", "敏感文件探测"),
-    ("attack_type:path traversal", "T1190", "Exploit Public-Facing Application", "路径遍历"),
 ]
 
 
@@ -118,9 +104,8 @@ def map_event(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     source = (event.get("source") or "").lower()
     payload = (event.get("payload") or "").lower()
 
-    has_username = "username" in payload or "user" in payload
-    has_password = "password" in payload or "pass" in payload or "passwd" in payload
-    is_admin = "admin" in payload
+    has_username = "username" in payload
+    has_password = "password" in payload
 
     # 按规则匹配
     for rule, tid, tname, behavior in MAPPING_RULES:

@@ -474,7 +474,12 @@ def cmd_report(args):
 
     if output:
         out_path = Path(output)
-        if out_path.is_dir():
+        # 以 .md 结尾 → 当作具体文件路径
+        if out_path.suffix == ".md":
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # 不以 .md 结尾 → 当作目录，自动创建并生成 <ip>.md
+            out_path.mkdir(parents=True, exist_ok=True)
             safe_name = ip.replace(".", "_").replace(":", "_")
             out_path = out_path / f"{safe_name}.md"
         out_path.write_text(report, encoding="utf-8")

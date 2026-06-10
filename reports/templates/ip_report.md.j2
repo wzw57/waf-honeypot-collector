@@ -27,33 +27,49 @@
 
 ## 4. 攻击类型分布
 
+{% if attack_types %}
 {% for type_name, type_count in attack_types %}
 - **{{ type_name }}**：{{ type_count }} 次
 {% endfor %}
+{% else %}
+暂无
+{% endif %}
 
 ## 5. 攻击时间线
 
 | 时间 | 数据源 | 攻击类型 | 目标 |
 |------|--------|----------|------|
+{% if timeline %}
 {% for ev in timeline %}
 | {{ ev.event_time }} | {{ ev.source }} | {{ ev.attack_type or '-' }} | {{ ev.uri or ev.protocol or '-' }} |
 {% endfor %}
+{% else %}
+| - | - | - | - |
+{% endif %}
 
 ## 6. IOC 列表
 
 | 类型 | 值 | 首次出现 |
 |------|-----|----------|
+{% if iocs %}
 {% for ioc in iocs %}
 | {{ ioc.ioc_type }} | `{{ ioc.ioc_value }}` | {{ ioc.first_seen }} |
 {% endfor %}
+{% else %}
+| - | - | - |
+{% endif %}
 
 ## 7. ATT&CK 映射
 
 | 攻击行为 | 技术 ID | 技术名称 |
 |----------|---------|----------|
+{% if attack_mappings %}
 {% for m in attack_mappings %}
 | {{ m.attack_behavior }} | {{ m.technique_id }} | {{ m.technique_name }} |
 {% endfor %}
+{% else %}
+| - | - | - |
+{% endif %}
 
 ## 8. 处置建议
 
