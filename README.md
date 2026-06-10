@@ -18,6 +18,8 @@
 
 ## 快速开始
 
+### 安装
+
 ```bash
 # 1. 安装依赖
 pip install -r requirements.txt
@@ -25,46 +27,81 @@ pip install -r requirements.txt
 # 2. 配置
 cp config.yaml.example config.yaml
 vim config.yaml
+```
 
+### Phase 1: SafeLine Syslog 接收
+
+```bash
 # 3. 初始化数据库
 python main.py init-db
 
-# 4. 启动 SafeLine Syslog 接收
+# 4. 启动 SafeLine Syslog 接收（前台阻塞）
 python main.py recv-safeline
 
-# 5. 拉取 HFish 日志（单次）
-python main.py collect-hfish
+# 5. 另一个终端使用 mock 工具发送测试日志
+python scripts/mock_syslog.py --count 5
+
+# 6. 查看入库日志
+python main.py show-latest
+
+# 7. 查看统计
+python main.py stats
+```
+
+### SafeLine WAF 配置
+
+在 SafeLine 管理界面配置 Syslog 转发：
+
+| 配置项 | 值 |
+|--------|-----|
+| 类型 | Syslog (UDP) |
+| 地址 | 你的 VPS IP |
+| 端口 | 1514 |
+
+### Mock 测试
+
+```bash
+# 发送 10 条默认样本
+python scripts/mock_syslog.py --count 10
+
+# 指定目标地址和端口
+python scripts/mock_syslog.py --host 192.168.1.100 --port 1514
+
+# 控制发送间隔
+python scripts/mock_syslog.py --count 100 --interval 0.1
 ```
 
 ## CLI 命令
 
-| 命令 | 说明 |
-|------|------|
-| `init-db` | 初始化数据库 |
-| `recv-safeline` | 启动 SafeLine Syslog 接收 |
-| `collect-hfish` | 单次拉取 HFish 日志 |
-| `collect-hfish-loop` | 循环拉取 HFish 日志 |
-| `normalize` | 标准化事件 |
-| `extract-ioc` | 提取 IOC |
-| `build-profiles` | 构建攻击源画像 |
-| `correlate` | 关联分析 |
-| `map-attack` | ATT&CK 映射 |
-| `report --ip 1.2.3.4` | 生成报告 |
-| `ai-summary --ip 1.2.3.4` | AI 辅助研判 |
-| `web` | 启动 Web Dashboard |
+| 命令 | 说明 | 阶段 |
+|------|------|------|
+| `init-db` | 初始化数据库 | Phase 0 |
+| `recv-safeline` | 启动 SafeLine Syslog 接收 | Phase 1 |
+| `show-latest` | 查看最近事件 | Phase 1 |
+| `stats` | 查看统计信息 | Phase 1 |
+| `collect-hfish` | 单次拉取 HFish 日志 | Phase 2 |
+| `collect-hfish-loop` | 循环拉取 HFish 日志 | Phase 2 |
+| `normalize` | 标准化事件 | Phase 3 |
+| `extract-ioc` | 提取 IOC | Phase 3 |
+| `build-profiles` | 构建攻击源画像 | Phase 3 |
+| `correlate` | 关联分析 | Phase 3 |
+| `map-attack` | ATT&CK 映射 | Phase 4 |
+| `report --ip 1.2.3.4` | 生成报告 | Phase 4 |
+| `ai-summary --ip 1.2.3.4` | AI 辅助研判 | Phase 5 |
+| `web` | 启动 Web Dashboard | Phase 6 |
 
 ## 项目结构
 
 ```
 ├── main.py               # CLI 入口
-├── app/                   # 基础设施（config, db, logger）
+├── app/                   # 基础设施（config, db, logger, utils）
 ├── collectors/            # 数据采集器
 ├── parsers/               # 日志解析器
 ├── analyzers/             # 分析引擎
 ├── reports/               # 报告生成
 ├── ai/                    # AI 辅助（可选）
 ├── web/                   # Web Dashboard（可选）
-├── scripts/               # 辅助脚本
+├── scripts/               # 辅助脚本（mock_syslog 等）
 ├── tests/                 # 测试
 ├── deploy/                # 部署配置
 └── docs/                  # 文档
@@ -83,3 +120,7 @@ python main.py collect-hfish
 - 不进行自动封禁
 - 不提交真实配置和 API Key 到 Git
 - Web Dashboard 默认仅监听 127.0.0.1
+
+## License
+
+MIT

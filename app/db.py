@@ -8,6 +8,9 @@
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Optional
+
+from app.utils import now_iso
 
 _local = threading.local()
 
@@ -234,3 +237,118 @@ def init_db(db_path):
 
     conn.commit()
     return str(db_path)
+
+
+# =============================================================================
+# SafeLine 原始日志操作
+# =============================================================================
+
+
+def insert_raw_safeline_log(db_path, raw_message, sender_ip, parse_result):
+    """
+    插入一条 SafeLine 原始日志。
+
+    Args:
+        db_path: 数据库文件路径。
+        raw_message: Syslog 原始报文。
+        sender_ip: 发送方 IP。
+        parse_result: Parser 返回的解析结果字典。
+
+    Returns:
+        int: 插入记录的自增 ID。
+    """
+    now = now_iso()
+
+    parse_status = "pending"
+    if parse_result.get("success"):
+        parse_status = "parsed"
+    else:
+        parse_status = "failed"
+
+    parsed_json = parse_result.get("parsed_json")
+    error_message = parse_result.get("error_message")
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO raw_safeline_logs
+            (received_at, sender_ip, raw_message, parsed_json,
+             parse_status, error_message, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (now, sender_ip, raw_message, parsed_json,
+         parse_status, error_message, now),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_latest_safeline_logs(db_path, limit=20):
+    """
+    获取最近的 SafeLine 日志。
+
+    Args:
+        db_path: 数据库文件路径。
+        limit: 返回条数。
+
+    Returns:
+        list[dict]: 日志记录列表。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, received_at, sender_ip, parse_status, error_message,
+               substr(raw_message, 1, 200) as raw_message_preview,
+               length(raw_message) as raw_length,
+               substr(parsed_json, 1, 200) as parsed_json_preview
+        FROM raw_safeline_logs
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_basic_stats(db_path):
+    """
+    获取基本统计信息。
+
+    Args:
+        db_path: 数据库文件路径。
+
+    Returns:
+        dict: 统计信息。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    # 总条数
+    cursor.execute("SELECT COUNT(*) as cnt FROM raw_safeline_logs")
+    total = cursor.fetchone()["cnt"]
+
+    # 按解析状态统计
+    cursor.execute(
+        "SELECT parse_status, COUNT(*) as cnt FROM raw_safeline_logs GROUP BY parse_status"
+    )
+    status_rows = cursor.fetchall()
+    status_stats = {row["parse_status"]: row["cnt"] for row in status_rows}
+
+    # 按发送方 IP 统计
+    cursor.execute(
+        "SELECT sender_ip, COUNT(*) as cnt FROM raw_safeline_logs GROUP BY sender_ip ORDER BY cnt DESC LIMIT 10"
+    )
+    ip_rows = cursor.fetchall()
+    top_senders = [{"ip": row["sender_ip"], "count": row["cnt"]} for row in ip_rows]
+
+    return {
+        "total": total,
+        "status": status_stats,
+        "parsed": status_stats.get("parsed", 0),
+        "failed": status_stats.get("failed", 0),
+        "pending": status_stats.get("pending", 0),
+        "top_senders": top_senders,
+    }

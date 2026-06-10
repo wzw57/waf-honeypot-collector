@@ -1,0 +1,67 @@
+[
+    {
+        "description": "SQL Injection - 完整 Syslog",
+        "syslog": "<134>Jun 10 10:30:00 safeline-server SafeLine[1234]: {\"event_time\":\"2026-06-10T10:30:00+0800\",\"src_ip\":\"10.0.0.1\",\"src_port\":54321,\"dst_ip\":\"192.168.1.100\",\"dst_port\":80,\"host\":\"www.target.com\",\"method\":\"GET\",\"uri\":\"/admin/login.php\",\"query_string\":\"user=admin&pass=123456\",\"user_agent\":\"sqlmap/1.7\",\"attack_type\":\"SQL Injection\",\"severity\":\"high\",\"rule_id\":\"1001\",\"payload\":\"1' OR '1'='1\",\"status_code\":200,\"event_id\":\"SL-a1b2c3d4\"}",
+        "expected_parse_status": "parsed",
+        "expected_fields": {
+            "attack_type": "SQL Injection",
+            "src_ip": "10.0.0.1",
+            "method": "GET"
+        }
+    },
+    {
+        "description": "XSS Attack",
+        "syslog": "<134>Jun 10 10:31:00 safeline-server SafeLine[1235]: {\"event_time\":\"2026-06-10T10:31:00+0800\",\"src_ip\":\"10.0.0.2\",\"src_port\":43210,\"dst_ip\":\"192.168.1.100\",\"dst_port\":443,\"host\":\"www.target.com\",\"method\":\"POST\",\"uri\":\"/search\",\"user_agent\":\"Chrome/120.0\",\"attack_type\":\"XSS\",\"severity\":\"high\",\"rule_id\":\"1002\",\"payload\":\"<script>alert(1)</script>\",\"status_code\":403,\"event_id\":\"SL-e5f6g7h8\"}",
+        "expected_parse_status": "parsed",
+        "expected_fields": {
+            "attack_type": "XSS",
+            "src_ip": "10.0.0.2",
+            "method": "POST"
+        }
+    },
+    {
+        "description": "Sensitive File Probe - .git/config",
+        "syslog": "<134>Jun 10 10:32:00 safeline-server SafeLine[1236]: {\"event_time\":\"2026-06-10T10:32:00+0800\",\"src_ip\":\"10.0.0.3\",\"src_port\":39871,\"dst_ip\":\"192.168.1.100\",\"dst_port\":80,\"host\":\"www.target.com\",\"method\":\"GET\",\"uri\":\"/.git/config\",\"user_agent\":\"curl/7.88.1\",\"attack_type\":\"Sensitive File Probe\",\"severity\":\"medium\",\"rule_id\":\"2001\",\"payload\":\"/.git/config\",\"status_code\":404,\"event_id\":\"SL-i9j0k1l2\"}",
+        "expected_parse_status": "parsed",
+        "expected_fields": {
+            "attack_type": "Sensitive File Probe",
+            "uri": "/.git/config"
+        }
+    },
+    {
+        "description": "Path Traversal",
+        "syslog": "<134>Jun 10 10:33:00 safeline-server SafeLine[1237]: {\"event_time\":\"2026-06-10T10:33:00+0800\",\"src_ip\":\"10.0.0.4\",\"src_port\":51234,\"dst_ip\":\"192.168.1.100\",\"dst_port\":80,\"host\":\"www.target.com\",\"method\":\"GET\",\"uri\":\"/web-inf/web.xml\",\"user_agent\":\"nikto/2.5.0\",\"attack_type\":\"Path Traversal\",\"severity\":\"high\",\"rule_id\":\"3001\",\"payload\":\"/web-inf/web.xml\",\"status_code\":200,\"event_id\":\"SL-m3n4o5p6\"}",
+        "expected_parse_status": "parsed",
+        "expected_fields": {
+            "attack_type": "Path Traversal",
+            "user_agent": "nikto/2.5.0"
+        }
+    },
+    {
+        "description": "Brute Force - API login",
+        "syslog": "<134>Jun 10 10:34:00 safeline-server SafeLine[1238]: {\"event_time\":\"2026-06-10T10:34:00+0800\",\"src_ip\":\"10.0.0.5\",\"src_port\":39812,\"dst_ip\":\"192.168.1.100\",\"dst_port\":80,\"host\":\"www.target.com\",\"method\":\"POST\",\"uri\":\"/api/login\",\"user_agent\":\"python-requests/2.31.0\",\"attack_type\":\"Brute Force\",\"severity\":\"medium\",\"rule_id\":\"4001\",\"payload\":\"{\\\"username\\\":\\\"admin\\\",\\\"password\\\":\\\"admin123\\\"}\",\"status_code\":401,\"event_id\":\"SL-q7r8s9t0\"}",
+        "expected_parse_status": "parsed",
+        "expected_fields": {
+            "attack_type": "Brute Force",
+            "uri": "/api/login"
+        }
+    },
+    {
+        "description": "无 JSON - 纯文本 Syslog",
+        "syslog": "<134>Jun 10 10:35:00 safeline-server SafeLine[1239]: This is a plain text log message without JSON",
+        "expected_parse_status": "failed",
+        "expected_error_contains": "no JSON object found"
+    },
+    {
+        "description": "空字符串",
+        "syslog": "",
+        "expected_parse_status": "failed",
+        "expected_error_contains": "empty"
+    },
+    {
+        "description": "无效 JSON - 花括号不完整",
+        "syslog": "<134>Jun 10 10:36:00 safeline-server SafeLine[1240]: {\"key\": \"value\"",
+        "expected_parse_status": "failed",
+        "expected_error_contains": "no JSON object found"
+    }
+]
