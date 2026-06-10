@@ -37,7 +37,7 @@ HFish 蜜罐  ──API───┘
 | 📄 报告 | Markdown 报告 | 按 IP 生成含 IOC / ATT&CK / 处置建议的报告 |
 | 🤖 AI | DeepSeek 辅助 | 可选接入，生成摘要 / Payload 解释 |
 | 🌐 Web | Dashboard | FastAPI + Bootstrap 5 + ECharts 可视化 |
-| 🚀 部署 | systemd 托管 | 3 个服务文件，支持自动重启 |
+| 🚀 部署 | systemd 托管 | 3 个服务文件 + ModSecurity 服务，支持自动重启 |
 
 ---
 
@@ -81,11 +81,15 @@ python main.py stats
 │  蜜罐     │   HTTP/JSON    │              │                  │  (data/  │
 └──────────┘                │  hfish_api.py │   raw_hfish_     │collector │
                             │              │ ────────────────→ │  .db)    │
-                            └──────┬───────┘                  └──────────┘
-                                   │
-                                   ▼
+┌────────────────┐          │              │                  └──────────┘
+│ ModSecurity    │ audit    │ modsecurity_  │  raw_waf_logs
+│ + OWASP CRS   ├─────────→ │ collector.py │ ───────────────→
+│ (/var/log/    │  file     │              │
+│  modsec_audit │          └──────┬───────┘
+│  .log)        │                 │
+└────────────────┘                ▼
                             ┌──────────────┐
-                            │   parsers/   │
+                            │  parsers/    │
                             │  safeline_   │
                             │  parser.py   │
                             │              │
@@ -273,7 +277,8 @@ ssh -L 8000:127.0.0.1:8000 ubuntu@YOUR_VPS_IP
 │   ├── logger.py           # 日志配置
 │   └── utils.py            # 工具函数
 ├── collectors/             # 数据采集
-│   ├── safeline_syslog.py  # SafeLine Syslog 接收
+│   ├── modsecurity_parser.py # ModSecurity audit log 解析
+│   ├── modsecurity_collector.py # ModSecurity 文件采集
 │   └── hfish_api.py        # HFish API 客户端
 ├── parsers/                # 日志解析
 │   ├── safeline_parser.py  # Syslog JSON 提取
@@ -333,6 +338,41 @@ ssh -L 8000:127.0.0.1:8000 ubuntu@YOUR_VPS_IP
 - ❌ 不进行主动漏洞扫描
 - ❌ 不进行自动封禁
 - ❌ 不实现木马/免杀/攻击工具
+
+---
+
+## 免费开源 WAF 接入：ModSecurity + OWASP CRS
+
+> SafeLine CE 的 Syslog / Attack Logs Export 功能可能受 License 限制，
+> 免费环境下可用 ModSecurity + OWASP CRS 作为替代 WAF 数据源。
+
+本项目支持读取 ModSecurity 审计日志（Native 格式），
+复用现有标准化、分析、报告和 Dashboard 链路。
+
+### 采集命令
+
+```bash
+python main.py --config config.yaml collect-modsecurity
+python main.py --config config.yaml collect-modsecurity-loop --interval 30
+```
+
+### 配置示例
+
+```yaml
+modsecurity:
+  enabled: true
+  audit_log_path: "/var/log/modsec_audit.log"
+  read_from_end: true
+```
+
+详细部署步骤见：[docs/modsecurity-nginx-setup.md](docs/modsecurity-nginx-setup.md)
+
+### 数据流
+
+```
+Nginx + ModSecurity + OWASP CRS  →  /var/log/modsec_audit.log  →  collectors/modsecurity_collector.py
+    →  parsers/modsecurity_parser.py  →  raw_waf_logs → normalize → IOC → profile → correlate → report
+```
 
 ---
 

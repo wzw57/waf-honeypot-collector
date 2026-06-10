@@ -281,3 +281,111 @@ def normalize_from_hfish(parsed_fields: Optional[Dict]) -> Optional[Dict[str, An
         "severity": normalize_severity(parsed_fields.get("severity")),
         "payload": payload,
     }
+
+
+# =============================================================================
+# ModSecurity 标准化
+# =============================================================================
+
+# CRS rule_id -> attack_type 推断
+CRS_ATTACK_TYPE_RANGES = [
+    (920000, 929999, "scanner"),
+    (930000, 931999, "path_traversal"),
+    (932000, 932999, "command_injection"),
+    (933000, 933999, "path_traversal"),
+    (934000, 934999, "command_injection"),
+    (941000, 941999, "xss"),
+    (942000, 943999, "sql_injection"),
+    (944000, 944999, "command_injection"),
+    (950000, 959999, "scanner"),
+]
+
+CRS_MESSAGE_KEYWORDS = [
+    ("sql injection", "sql_injection"),
+    ("sqli", "sql_injection"),
+    ("xss", "xss"),
+    ("cross site", "xss"),
+    ("rfi", "path_traversal"),
+    ("lfi", "path_traversal"),
+    ("path traversal", "path_traversal"),
+    ("rce", "command_injection"),
+    ("command injection", "command_injection"),
+    ("remote file", "path_traversal"),
+    ("local file", "path_traversal"),
+    ("scanner", "scanner"),
+    ("protocol violation", "scanner"),
+    ("php injection", "command_injection"),
+]
+
+
+def infer_attack_type(rule_id: Optional[str], message: Optional[str]) -> str:
+    """
+    根据 rule_id 和 message 推断攻击类型。
+
+    Args:
+        rule_id: CRS 规则 ID（字符串）。
+        message: 规则消息。
+
+    Returns:
+        str: 标准攻击类型。
+    """
+    # 优先按 rule_id 范围推断
+    if rule_id:
+        try:
+            rid = int(rule_id)
+            for start, end, atype in CRS_ATTACK_TYPE_RANGES:
+                if start <= rid <= end:
+                    return atype
+        except ValueError:
+            pass
+
+    # 其次按 message 关键词推断
+    if message:
+        msg_lower = message.lower()
+        for keyword, atype in CRS_MESSAGE_KEYWORDS:
+            if keyword in msg_lower:
+                return atype
+
+    return "web_attack"
+
+
+def normalize_from_modsecurity(parsed: Optional[Dict]) -> Optional[Dict[str, Any]]:
+    """
+    将 ModSecurity 解析结果标准化为统一事件格式。
+
+    Args:
+        parsed: ModSecurity parser 的 parse_transaction() 返回结果。
+
+    Returns:
+        dict|None: 标准化事件字典。
+    """
+    if not parsed or not isinstance(parsed, dict):
+        return None
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    attack_type = infer_attack_type(
+        parsed.get("rule_id"), parsed.get("message")
+    )
+
+    return {
+        "source": "modsecurity",
+        "source_event_id": parsed.get("transaction_id") or "",
+        "event_time": normalize_event_time(parsed.get("timestamp")) or now,
+        "src_ip": parsed.get("client_ip") or "",
+        "src_port": parsed.get("client_port"),
+        "dst_ip": parsed.get("server_ip"),
+        "dst_port": parsed.get("server_port"),
+        "protocol": "HTTP",
+        "http_method": parsed.get("method"),
+        "host": parsed.get("host"),
+        "uri": parsed.get("uri"),
+        "user_agent": parsed.get("user_agent"),
+        "attack_type": attack_type,
+        "severity": normalize_severity(parsed.get("severity")),
+        "payload": parsed.get("matched_data") or parsed.get("message"),
+        # 额外字段放入 payload 末尾
+        "_rule_id": parsed.get("rule_id"),
+        "_rule_name": parsed.get("message"),
+        "_action": parsed.get("action"),
+        "_blocked": parsed.get("blocked", False),
+    }

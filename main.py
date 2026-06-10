@@ -15,6 +15,7 @@ WAF Honeypot Collector — CLI 入口。
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -24,9 +25,10 @@ from app.db import (
     get_basic_stats,
     get_events_by_ip,
     get_extended_stats,
-    get_latest_normalized_events,
-    get_latest_safeline_logs,
     get_latest_hfish_events,
+    get_latest_normalized_events,
+    get_latest_raw_waf_logs,
+    get_latest_safeline_logs,
     init_db,
     insert_normalized_event,
     insert_raw_hfish_event,
@@ -36,6 +38,7 @@ from app.logger import get_logger, setup_logging
 from analyzers.normalize_runner import run_normalize
 from app.utils import now_iso
 from collectors.hfish_api import HFishCollector
+from collectors.modsecurity_collector import ModSecurityCollector
 from collectors.safeline_syslog import SafeLineSyslogReceiver
 from parsers.hfish_parser import (
     compute_event_id,
@@ -118,6 +121,23 @@ def cmd_show_latest(args):
         print("=" * 90)
         print()
 
+    elif mode == "raw_waf":
+        logs = get_latest_raw_waf_logs(db_path, limit=limit)
+        if not logs:
+            print("[INFO] 暂无通用 WAF 日志")
+            return
+        print(f"\n{'='*90}")
+        print(f"  最近 {len(logs)} 条通用 WAF 日志 (ModSecurity)")
+        print(f"{'='*90}")
+        print(f"{'ID':>6} | {'来源':<14} | {'事件时间':<22} | {'接收时间':<22} | {'已处理':>5}")
+        print("-" * 90)
+        for log in logs:
+            print(f"{log['id']:>6} | {log['source']:<14} | "
+                  f"{(log['event_time'] or '-'):<22} | {log['received_at']:<22} | "
+                  f"{'✅' if log['processed'] else '⏳':>5}")
+        print("=" * 90)
+        print()
+
     else:
         # 默认：显示标准化事件
         logs = get_latest_normalized_events(db_path, limit=limit, source=source)
@@ -145,6 +165,7 @@ def cmd_stats(args):
 
     s = stats["safeline"]
     h = stats["hfish"]
+    w = stats.get("waf", {"total": 0, "processed": 0, "pending": 0})
     n = stats["normalized"]
 
     print(f"\n{'='*50}")
@@ -157,6 +178,12 @@ def cmd_stats(args):
         print(f"    ├─ 解析成功: {s['parsed']}")
         print(f"    ├─ 解析失败: {s['failed']}")
         print(f"    └─ 待解析:   {s['pending']}")
+
+    print(f"\n  [ModSecurity (OWASP CRS)]")
+    print(f"    总日志: {w['total']} 条")
+    if w["total"] > 0:
+        print(f"    ├─ 已处理:   {w['processed']}")
+        print(f"    └─ 待处理:   {w['pending']}")
 
     print(f"\n  [HFish 蜜罐]")
     print(f"    总日志: {h['total']} 条")
@@ -172,7 +199,7 @@ def cmd_stats(args):
         for src, cnt in n["source_distribution"].items():
             print(f"      {src}: {cnt} 条")
 
-    print(f"\n  总采集: {s['total'] + h['total']} 条 | "
+    print(f"\n  总采集: {s['total'] + h['total'] + w['total']} 条 | "
           f"标准化: {n['total']} 条")
     print("=" * 50)
     print()
@@ -523,6 +550,95 @@ def cmd_ai_summary(args):
         print("[WARN] AI 研判失败，请检查 API 配置和网络连接")
 
 
+def cmd_collect_modsecurity(args):
+    """单次采集 ModSecurity audit log。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    ms_config = config.get("modsecurity", {})
+
+    audit_log_path = ms_config.get("audit_log_path", "/var/log/modsec_audit.log")
+    state_file = ms_config.get("state_file", "data/modsecurity_state.json")
+    read_from_end = ms_config.get("read_from_end", True)
+
+    if not os.path.exists(audit_log_path):
+        print(f"[INFO] ModSecurity 审计日志不存在: {audit_log_path}")
+        print("[INFO] 如需接入请参考 docs/modsecurity-nginx-setup.md")
+        return
+
+    from app.db import init_db, insert_raw_waf_log
+    init_db(db_path)
+
+    def on_transaction(parsed):
+        raw_text = parsed.pop("_raw_text", "")
+        raw_hash = parsed.pop("_raw_hash", "")
+        import json as _json
+        insert_raw_waf_log(
+            db_path,
+            source="modsecurity",
+            raw_message=raw_text,
+            raw_hash=raw_hash,
+            event_time=parsed.get("timestamp"),
+            parsed_json=_json.dumps(parsed, ensure_ascii=False),
+        )
+
+    collector = ModSecurityCollector(
+        audit_log_path=audit_log_path,
+        state_file=state_file,
+        read_from_end=read_from_end,
+        on_transaction=on_transaction,
+    )
+
+    result = collector.collect_once()
+    print(f"[INFO] ModSecurity 采集完成: "
+          f"parsed={result['parsed']} "
+          f"inserted={result['inserted']} "
+          f"skipped={result['skipped']}")
+    if result.get("error"):
+        print(f"[WARN] {result['error']}")
+
+
+def cmd_collect_modsecurity_loop(args):
+    """循环采集 ModSecurity audit log。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    ms_config = config.get("modsecurity", {})
+
+    audit_log_path = ms_config.get("audit_log_path", "/var/log/modsec_audit.log")
+    state_file = ms_config.get("state_file", "data/modsecurity_state.json")
+    read_from_end = ms_config.get("read_from_end", True)
+    interval = args.interval or ms_config.get("interval", 30)
+
+    if not os.path.exists(audit_log_path):
+        print(f"[INFO] ModSecurity 审计日志不存在: {audit_log_path}")
+        print("[INFO] 如需接入请参考 docs/modsecurity-nginx-setup.md")
+        return
+
+    from app.db import init_db, insert_raw_waf_log
+    init_db(db_path)
+
+    def on_transaction(parsed):
+        raw_text = parsed.pop("_raw_text", "")
+        raw_hash = parsed.pop("_raw_hash", "")
+        import json as _json
+        insert_raw_waf_log(
+            db_path,
+            source="modsecurity",
+            raw_message=raw_text,
+            raw_hash=raw_hash,
+            event_time=parsed.get("timestamp"),
+            parsed_json=_json.dumps(parsed, ensure_ascii=False),
+        )
+
+    collector = ModSecurityCollector(
+        audit_log_path=audit_log_path,
+        state_file=state_file,
+        read_from_end=read_from_end,
+        on_transaction=on_transaction,
+    )
+
+    collector.collect_loop(interval=interval)
+
+
 def cmd_web(args):
     """启动 Web Dashboard。"""
     config = get_config(args.config)
@@ -707,7 +823,7 @@ def main():
     )
     p_latest.add_argument(
         "--mode", type=str, default="normalized",
-        choices=["normalized", "raw_safeline", "raw_hfish"],
+        choices=["normalized", "raw_safeline", "raw_hfish", "raw_waf"],
         help="显示模式（默认: normalized 标准化事件）",
     )
 
@@ -736,6 +852,18 @@ def main():
     p_top.add_argument(
         "--limit", type=int, default=10,
         help="返回条数（默认: 10）",
+    )
+
+    # --- ModSecurity ---
+    subparsers.add_parser("collect-modsecurity", help="单次采集 ModSecurity audit log")
+
+    p_ms_loop = subparsers.add_parser(
+        "collect-modsecurity-loop",
+        help="循环采集 ModSecurity audit log（前台阻塞）",
+    )
+    p_ms_loop.add_argument(
+        "--interval", type=int, default=None,
+        help="采集间隔秒数（覆盖 config.yaml 配置）",
     )
 
     # --- Phase 4 ---
@@ -799,6 +927,8 @@ def main():
         "report": cmd_report,
         "ai-summary": cmd_ai_summary,
         "web": cmd_web,
+        "collect-modsecurity": cmd_collect_modsecurity,
+        "collect-modsecurity-loop": cmd_collect_modsecurity_loop,
     }
 
     try:

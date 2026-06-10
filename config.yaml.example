@@ -44,6 +44,19 @@ hfish:
   enable_normalization: true  # 是否自动标准化
 
 # =============================================================================
+# ModSecurity + OWASP CRS 配置
+# 接入方式：读取 ModSecurity audit log 文件
+# =============================================================================
+modsecurity:
+  enabled: false
+  audit_log_path: "/var/log/modsec_audit.log"
+  mode: "file"                  # 当前仅支持 file
+  interval: 30                  # 循环采集间隔，单位秒
+  read_from_end: true           # 首次运行是否从文件末尾开始读取
+  state_file: "data/modsecurity_state.json"
+  enable_normalization: true
+
+# =============================================================================
 # 安全分析功能开关
 # =============================================================================
 ioc:

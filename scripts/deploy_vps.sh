@@ -170,6 +170,40 @@ ReadWritePaths=${APP_DIR}/data ${APP_DIR}/logs ${APP_DIR}/reports
 WantedBy=multi-user.target
 SERVICE
 
+# ─── 生成 ModSecurity service（不自动启动） ──────────────────────────────────
+info "生成 systemd 服务: waf-honeypot-modsecurity（未启用）..."
+cat > /etc/systemd/system/waf-honeypot-modsecurity.service << SERVICE
+[Unit]
+Description=WAF Honeypot Collector - ModSecurity Audit Log Collector
+Documentation=https://github.com/wzw57/waf-honeypot-collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${APP_USER}
+Group=${APP_GROUP}
+WorkingDirectory=${APP_DIR}
+ExecStart=${APP_DIR}/venv/bin/python ${APP_DIR}/main.py --config ${CONFIG_FILE} collect-modsecurity-loop
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-${ENV_FILE}
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${APP_DIR}/data ${APP_DIR}/logs ${APP_DIR}/reports
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+echo ""  # 暂时隐藏提示，最后统一输出
+
 # ─── 启动服务 ────────────────────────────────────────────────────────────────
 info "重新加载 systemd 配置 ..."
 systemctl daemon-reload
@@ -205,4 +239,14 @@ warn "  - SafeLine 真实接入需要云安全组和防火墙放行 UDP 1514"
 warn "  - HFish 未自动启动，单独配置后手动启用"
 warn "  - 编辑 $ENV_FILE 填入真实 Token / API Key"
 warn "  - Web Dashboard 默认仅监听 127.0.0.1，不直接暴露公网"
+echo ""
+warn "ModSecurity (OWASP CRS) 接入说明:"
+warn "  已生成服务文件但未自动启动: waf-honeypot-modsecurity"
+warn "  如需启用:"
+warn "    sudo systemctl enable --now waf-honeypot-modsecurity"
+warn "    systemctl status waf-honeypot-modsecurity --no-pager"
+warn "    journalctl -u waf-honeypot-modsecurity -f"
+warn "  需要给 ubuntu 用户读取审计日志的权限:"
+warn "    sudo setfacl -m u:ubuntu:r /var/log/modsec_audit.log"
+warn "  详细部署参见: docs/modsecurity-nginx-setup.md"
 echo ""

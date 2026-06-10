@@ -11,7 +11,11 @@ from app.db import get_connection, insert_normalized_event
 from app.logger import get_logger
 from parsers.hfish_parser import extract_fields as extract_hfish_fields
 from parsers.hfish_parser import extract_hfish_event
-from .normalizer import normalize_from_hfish, normalize_from_safeline
+from .normalizer import (
+    normalize_from_hfish,
+    normalize_from_modsecurity,
+    normalize_from_safeline,
+)
 
 logger = get_logger("normalize_runner")
 
@@ -90,6 +94,44 @@ def run_normalize(db_path, source_filter=None):
                     skipped_count += 1
             else:
                 skipped_count += 1
+
+    # 标准化 ModSecurity (raw_waf_logs)
+    if source_filter is None or source_filter == "modsecurity":
+        cursor.execute(
+            "SELECT id, parsed_json FROM raw_waf_logs "
+            "WHERE processed = 0 "
+            "AND parsed_json IS NOT NULL "
+            "AND id NOT IN ("
+            "  SELECT raw_id FROM normalized_events"
+            "  WHERE raw_table = 'raw_waf_logs'"
+            ")"
+        )
+        rows = cursor.fetchall()
+        for row in rows:
+            raw_id = row["id"]
+            parsed_json = row["parsed_json"]
+            if parsed_json:
+                try:
+                    parsed_dict = json.loads(parsed_json)
+                    event = normalize_from_modsecurity(parsed_dict)
+                    if event:
+                        insert_normalized_event(
+                            db_path, event, "raw_waf_logs", raw_id
+                        )
+                        # 标记为已处理
+                        cursor.execute(
+                            "UPDATE raw_waf_logs SET processed = 1 WHERE id = ?",
+                            (raw_id,),
+                        )
+                        normalized_count += 1
+                    else:
+                        skipped_count += 1
+                except (json.JSONDecodeError, Exception) as e:
+                    logger.debug("ModSecurity 标准化跳过 #%d: %s", raw_id, e)
+                    skipped_count += 1
+            else:
+                skipped_count += 1
+        conn.commit()
 
     logger.info("标准化完成: 新增 %d 条, 跳过 %d 条", normalized_count, skipped_count)
     return {"normalized": normalized_count, "skipped": skipped_count}

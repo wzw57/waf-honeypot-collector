@@ -54,6 +54,15 @@ DEFAULT_CONFIG = {
     "correlation": {
         "enabled": True,
     },
+    "modsecurity": {
+        "enabled": False,
+        "audit_log_path": "/var/log/modsec_audit.log",
+        "mode": "file",
+        "interval": 30,
+        "read_from_end": True,
+        "state_file": "data/modsecurity_state.json",
+        "enable_normalization": True,
+    },
     "deepseek": {
         "enabled": False,
         "base_url": "https://api.deepseek.com",

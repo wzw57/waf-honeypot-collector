@@ -230,6 +230,29 @@ def init_db(db_path):
         ON attack_mappings(src_ip)
     """)
 
+    # ========== raw_waf_logs — 通用 WAF 原始日志（ModSecurity 等） ==========
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS raw_waf_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL DEFAULT 'modsecurity',
+            raw_message TEXT NOT NULL,
+            raw_hash TEXT UNIQUE,
+            event_time TEXT,
+            received_at TEXT NOT NULL,
+            parsed_json TEXT,
+            processed INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_raw_waf_source
+        ON raw_waf_logs(source)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_raw_waf_processed
+        ON raw_waf_logs(processed)
+    """)
+
     # ========== ioc_extraction_status — IOC 提取状态 ==========
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ioc_extraction_status (
@@ -451,6 +474,76 @@ def get_latest_hfish_events(db_path, limit=20):
 
 
 # =============================================================================
+# 通用 WAF 日志操作（ModSecurity 等）
+# =============================================================================
+
+
+def insert_raw_waf_log(db_path, source, raw_message, raw_hash,
+                       event_time=None, parsed_json=None):
+    """
+    插入一条通用 WAF 原始日志。
+
+    Args:
+        db_path: 数据库文件路径。
+        source: 数据源标识（如 modsecurity）。
+        raw_message: 原始日志全文。
+        raw_hash: SHA256 哈希（用于去重）。
+        event_time: 事件时间。
+        parsed_json: 解析后的 JSON 字符串。
+
+    Returns:
+        int|None: 插入记录 ID，重复时返回 None。
+    """
+    from app.utils import now_iso
+    from app.db import get_connection
+
+    now = now_iso()
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO raw_waf_logs
+                (source, raw_message, raw_hash, event_time,
+                 received_at, parsed_json, processed, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+            """,
+            (source, raw_message, raw_hash, event_time, now, parsed_json, now),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        logger.debug("raw_waf_logs 去重跳过 (hash=%s)", raw_hash[:16])
+        return None
+
+
+def get_latest_raw_waf_logs(db_path, limit=20, source=None):
+    """获取最近的通用 WAF 日志。"""
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    if source:
+        cursor.execute(
+            "SELECT id, source, event_time, received_at, processed, "
+            "substr(raw_message, 1, 200) as raw_preview, "
+            "length(raw_message) as raw_length "
+            "FROM raw_waf_logs WHERE source = ? ORDER BY id DESC LIMIT ?",
+            (source, limit),
+        )
+    else:
+        cursor.execute(
+            "SELECT id, source, event_time, received_at, processed, "
+            "substr(raw_message, 1, 200) as raw_preview, "
+            "length(raw_message) as raw_length "
+            "FROM raw_waf_logs ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+
+    return [dict(r) for r in cursor.fetchall()]
+
+
+# =============================================================================
 # 标准化事件操作
 # =============================================================================
 
@@ -600,8 +693,8 @@ def get_extended_stats(db_path):
     cursor = conn.cursor()
 
     # 白名单：只允许查询预期的表名，防止 SQL 注入
-    _ALLOWED_TABLES = {"raw_safeline_logs", "raw_hfish_events", "normalized_events"}
-    _ALLOWED_STATUS_TABLES = {"raw_safeline_logs", "raw_hfish_events"}
+    _ALLOWED_TABLES = {"raw_safeline_logs", "raw_hfish_events", "raw_waf_logs", "normalized_events"}
+    _ALLOWED_STATUS_TABLES = {"raw_safeline_logs", "raw_hfish_events", "raw_waf_logs"}
 
     def _validate_table(table, allowed_set):
         if table not in allowed_set:
@@ -625,12 +718,26 @@ def get_extended_stats(db_path):
         )
         return {row["source"]: row["cnt"] for row in cursor.fetchall()}
 
+    # raw_waf_logs 的 processed 字段类似 parse_status
+    def count_waf_by_processed():
+        cursor.execute(
+            "SELECT processed, COUNT(*) as cnt FROM raw_waf_logs GROUP BY processed"
+        )
+        return {("processed" if r["processed"] else "pending"): r["cnt"] for r in cursor.fetchall()}
+
+    def count_waf_total():
+        _validate_table("raw_waf_logs", _ALLOWED_TABLES)
+        cursor.execute("SELECT COUNT(*) as cnt FROM raw_waf_logs")
+        return cursor.fetchone()["cnt"]
+
     safeline_total = count_table("raw_safeline_logs")
     hfish_total = count_table("raw_hfish_events")
+    waf_total = count_waf_total()
     normalized_total = count_table("normalized_events")
 
     safeline_status = count_by_status("raw_safeline_logs")
     hfish_status = count_by_status("raw_hfish_events")
+    waf_status = count_waf_by_processed()
 
     source_dist = count_by_source()
 
@@ -646,6 +753,11 @@ def get_extended_stats(db_path):
             "parsed": hfish_status.get("parsed", 0),
             "failed": hfish_status.get("failed", 0),
             "pending": hfish_status.get("pending", 0),
+        },
+        "waf": {
+            "total": waf_total,
+            "processed": waf_status.get("processed", 0),
+            "pending": waf_status.get("pending", 0),
         },
         "normalized": {
             "total": normalized_total,
