@@ -17,6 +17,8 @@ config.yaml
 
 # 数据库
 data/collector.db
+data/collector.db-shm
+data/collector.db-wal
 data/backups/
 
 # 日志

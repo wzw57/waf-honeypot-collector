@@ -199,7 +199,22 @@ def build_syslog_message(event: dict) -> str:
     return syslog_msg
 
 
-def send_mock_log(host: str, port: int, count: int, interval: float):
+def build_invalid_syslog() -> str:
+    """生成一条不含 JSON 的无效 Syslog 报文，用于测试解析失败容错。"""
+    now = time.strftime("%b %d %H:%M:%S", time.localtime())
+    messages = [
+        f"<134>{now} safeline-server SafeLine[{random.randint(1000, 9999)}]: "
+        f"this is a plain text log message without JSON content",
+        f"<134>{now} safeline-server SafeLine[{random.randint(1000, 9999)}]: "
+        f"connection closed by remote host",
+        f"<134>{now} safeline-server SafeLine[{random.randint(1000, 9999)}]: "
+        f"error processing request: invalid method",
+    ]
+    return random.choice(messages)
+
+
+def send_mock_log(host: str, port: int, count: int, interval: float,
+                  invalid: bool = False):
     """
     发送模拟 Syslog 报文。
 
@@ -208,22 +223,28 @@ def send_mock_log(host: str, port: int, count: int, interval: float):
         port: 目标端口。
         count: 发送条数。
         interval: 发送间隔（秒）。
+        invalid: 是否发送无 JSON 的无效报文（用于测试容错）。
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    print(f"[INFO] 开始发送 {count} 条模拟 SafeLine Syslog")
+    mode = "无效(无JSON)" if invalid else "正常"
+    print(f"[INFO] 开始发送 {count} 条{mode}模拟 SafeLine Syslog")
     print(f"[INFO] 目标: {host}:{port}/udp")
     print(f"[INFO] 间隔: {interval} 秒")
     print("-" * 50)
 
     for i in range(count):
-        event = random.choice(SAMPLE_EVENTS)
-        message = build_syslog_message(event)
+        if invalid:
+            message = build_invalid_syslog()
+            label = "(no-json)"
+        else:
+            event = random.choice(SAMPLE_EVENTS)
+            message = build_syslog_message(event)
+            label = f"{event['attack_type']:>25s} | {event['src_ip']:>15s} | {event['uri']}"
 
         try:
             sock.sendto(message.encode("utf-8"), (host, port))
-            print(f"[SENT] #{i + 1}/{count} | {event['attack_type']:>25s} | "
-                  f"{event['src_ip']:>15s} | {event['uri']}")
+            print(f"[SENT] #{i + 1}/{count} | {label}")
         except Exception as e:
             print(f"[ERROR] #{i + 1}/{count} 发送失败: {e}")
 
@@ -256,9 +277,13 @@ def main():
         "--interval", type=float, default=0.2,
         help="发送间隔秒数（默认: 0.2）"
     )
+    parser.add_argument(
+        "--invalid", action="store_true",
+        help="发送无 JSON 的无效 Syslog 报文（测试解析容错）"
+    )
 
     args = parser.parse_args()
-    send_mock_log(args.host, args.port, args.count, args.interval)
+    send_mock_log(args.host, args.port, args.count, args.interval, invalid=args.invalid)
 
 
 if __name__ == "__main__":

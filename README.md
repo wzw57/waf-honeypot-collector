@@ -69,16 +69,26 @@ python scripts/mock_syslog.py --host 192.168.1.100 --port 1514
 
 # 控制发送间隔
 python scripts/mock_syslog.py --count 100 --interval 0.1
+
+# 发送无 JSON 的无效报文（测试解析失败不崩溃）
+python scripts/mock_syslog.py --count 3 --invalid
 ```
 
 ## CLI 命令
 
-| 命令 | 说明 | 阶段 |
-|------|------|------|
-| `init-db` | 初始化数据库 | Phase 0 |
-| `recv-safeline` | 启动 SafeLine Syslog 接收 | Phase 1 |
-| `show-latest` | 查看最近事件 | Phase 1 |
-| `stats` | 查看统计信息 | Phase 1 |
+### 已实现命令（Phase 0-1）
+
+| 命令 | 说明 |
+|------|------|
+| `init-db` | 初始化数据库 |
+| `recv-safeline` | 启动 SafeLine Syslog 接收 |
+| `show-latest` | 查看最近事件 |
+| `stats` | 查看统计信息 |
+
+### 规划中命令（后续 Phase）
+
+| 命令 | 说明 | 计划阶段 |
+|------|------|----------|
 | `collect-hfish` | 单次拉取 HFish 日志 | Phase 2 |
 | `collect-hfish-loop` | 循环拉取 HFish 日志 | Phase 2 |
 | `normalize` | 标准化事件 | Phase 3 |
@@ -87,6 +97,8 @@ python scripts/mock_syslog.py --count 100 --interval 0.1
 | `correlate` | 关联分析 | Phase 3 |
 | `map-attack` | ATT&CK 映射 | Phase 4 |
 | `report --ip 1.2.3.4` | 生成报告 | Phase 4 |
+| `ai-summary --ip 1.2.3.4` | AI 辅助研判 | Phase 5 |
+| `web` | 启动 Web Dashboard | Phase 6 |
 | `ai-summary --ip 1.2.3.4` | AI 辅助研判 | Phase 5 |
 | `web` | 启动 Web Dashboard | Phase 6 |
 

@@ -11,4 +11,4 @@ requests>=2.28.0
 # openai>=1.0.0
 
 # 测试
-# pytest>=7.4.0
+pytest>=7.4.0

@@ -2,6 +2,13 @@
 SafeLine Syslog 解析器。
 
 从 Syslog 原始报文中提取 JSON 部分并进行解析。
+
+TODO: 当前 JSON 提取策略（查找首尾 {}）适合 Phase 1 MVP。
+      后续需要根据真实 SafeLine Syslog 样本增强：
+      - 确认 Syslog 报文中 JSON 的确切位置（可能有固定前缀）
+      - 处理转义字符和多行 JSON
+      - 增加字段类型校验和归一化
+      - 对接后续 Normalizer 模块
 """
 
 import json
