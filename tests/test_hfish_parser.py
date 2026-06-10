@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from parsers.hfish_parser import extract_hfish_event, extract_fields
+from parsers.hfish_parser import (
+    compute_event_id,
+    extract_hfish_event,
+    extract_fields,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -62,6 +66,37 @@ class TestExtractHfishEvent:
         """None 输入应解析失败。"""
         result = extract_hfish_event(None)
         assert result["success"] is False
+
+
+class TestComputeEventId:
+    """测试 fallback event_id 生成。"""
+
+    def test_compute_event_id_consistent(self):
+        """相同 raw_json 应生成相同 event_id。"""
+        raw = '{"src_ip":"1.2.3.4","type":"SSH"}'
+        id1 = compute_event_id(raw)
+        id2 = compute_event_id(raw)
+        assert id1 == id2
+        assert id1.startswith("sha256:")
+
+    def test_compute_event_id_different(self):
+        """不同 raw_json 应生成不同 event_id。"""
+        id1 = compute_event_id('{"a":1}')
+        id2 = compute_event_id('{"a":2}')
+        assert id1 != id2
+
+    def test_compute_event_id_format(self):
+        """event_id 应为 sha256: + 16 位 hex。"""
+        event_id = compute_event_id('{"test":"data"}')
+        assert event_id.startswith("sha256:")
+        hex_part = event_id.split(":")[1]
+        assert len(hex_part) == 16
+        int(hex_part, 16)  # 验证是合法 hex
+
+    def test_compute_event_id_empty_string(self):
+        """空字符串也应生成有效 ID。"""
+        event_id = compute_event_id("")
+        assert event_id.startswith("sha256:")
 
 
 class TestExtractFields:

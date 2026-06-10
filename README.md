@@ -77,6 +77,26 @@ python main.py show-ip --ip 10.0.0.1
 | 地址 | 你的 VPS IP |
 | 端口 | 1514 |
 
+### HFish 蜜罐配置
+
+在 `config.yaml` 中配置 HFish 接入信息：
+
+```yaml
+hfish:
+  enabled: true
+  api_url: "http://your-hfish-server:5000"
+  auth_type: token
+  api_token: ""               # 从环境变量 HFISH_API_TOKEN 读取
+  api_path: "/api/v1/attack"  # ⚠️ 随 HFish 版本可能变化
+  interval: 60
+```
+
+> **⚠️ 注意：** HFish API 的 `api_path` 在不同版本中可能不同。默认值 `/api/v1/attack` 基于常见版本，但不保证在所有版本中可用。
+>
+> **建议：** 登录 HFish 后台，打开浏览器开发者工具（F12）→ Network 标签，找到攻击日志相关的 API 请求，确认实际路径后配置到 `api_path`。
+>
+> 如果 HFish 启用了认证，请优先使用 Token 方式（`auth_type: token`），Token 设置到环境变量 `HFISH_API_TOKEN`。账号密码方式（`auth_type: password`）作为备选。
+
 ### Mock 测试
 
 ```bash

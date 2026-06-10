@@ -4,8 +4,26 @@ HFish 蜜罐日志解析器。
 将 HFish API 返回的 JSON 事件解析为结构化字段。
 """
 
+import hashlib
 import json
 from typing import Any, Dict, Optional
+
+
+def compute_event_id(raw_data: str) -> str:
+    """
+    基于 raw_json 的 SHA256 生成稳定的 fallback event_id。
+
+    当 HFish 事件本身不包含 id/event_id/_id 字段时，
+    用此函数生成的 ID 确保相同内容的日志不会重复入库。
+
+    Args:
+        raw_data: 原始 JSON 字符串。
+
+    Returns:
+        str: 形如 "sha256:xxxx" 的 event_id。
+    """
+    digest = hashlib.sha256(raw_data.encode("utf-8")).hexdigest()[:16]
+    return f"sha256:{digest}"
 
 
 def extract_hfish_event(raw_data: str) -> Dict[str, Any]:

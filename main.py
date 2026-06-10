@@ -33,12 +33,16 @@ from app.db import (
     insert_raw_safeline_log,
 )
 from app.logger import get_logger, setup_logging
+from analyzers.normalize_runner import run_normalize
 from app.utils import now_iso
 from collectors.hfish_api import HFishCollector
 from collectors.safeline_syslog import SafeLineSyslogReceiver
-from parsers.hfish_parser import extract_fields, extract_hfish_event
+from parsers.hfish_parser import (
+    compute_event_id,
+    extract_fields as extract_hfish_fields,
+    extract_hfish_event,
+)
 from parsers.safeline_parser import parse_safeline_syslog
-from analyzers.normalizer import normalize_from_safeline, normalize_from_hfish
 
 
 def cmd_init_db(args):
@@ -186,25 +190,28 @@ def cmd_collect_hfish(args):
 
     init_db(db_path)
 
-    def on_events_received(raw_jsons):
+    def _ingest(raw_jsons, label="HFish"):
+        """将 HFish 原始 JSON 列表入库，使用 compute_event_id 做 fallback 去重。"""
         count = 0
         skipped = 0
         for raw_json in raw_jsons:
-            # 解析
             parse_result = extract_hfish_event(raw_json)
             parsed_dict = parse_result.get("parsed_dict")
-            fields = extract_fields(parsed_dict) if parsed_dict else {}
-            event_id = fields.get("event_id")
+            raw_fields = extract_hfish_fields(parsed_dict) if parsed_dict else {}
+            event_id = raw_fields.get("event_id")
 
-            # 入库
+            # 如果事件没有 event_id，用 raw_json 的 sha256 作为稳定 ID
+            if not event_id:
+                event_id = compute_event_id(raw_json)
+
             row_id = insert_raw_hfish_event(db_path, raw_json, event_id, parse_result)
             if row_id is not None:
                 count += 1
             else:
                 skipped += 1
 
-        logger.info("HFish 入库: 新增 %d 条, 去重跳过 %d 条", count, skipped)
-        print(f"[INFO] HFish 入库完成: 新增 {count} 条, 去重跳过 {skipped} 条")
+        logger.info("%s 入库: 新增 %d 条, 去重跳过 %d 条", label, count, skipped)
+        print(f"[INFO] {label} 入库完成: 新增 {count} 条, 去重跳过 {skipped} 条")
 
     collector = HFishCollector(
         api_url=hf_config["api_url"],
@@ -214,7 +221,7 @@ def cmd_collect_hfish(args):
         password=hf_config.get("password"),
         api_path=hf_config.get("api_path", "/api/v1/attack"),
         page_size=hf_config.get("page_size", 100),
-        on_events_received=on_events_received,
+        on_events_received=lambda jsons: _ingest(jsons, "HFish"),
     )
 
     print(f"[INFO] 开始拉取 HFish 日志: {hf_config['api_url']}")
@@ -241,8 +248,10 @@ def cmd_collect_hfish_loop(args):
         for raw_json in raw_jsons:
             parse_result = extract_hfish_event(raw_json)
             parsed_dict = parse_result.get("parsed_dict")
-            fields = extract_fields(parsed_dict) if parsed_dict else {}
-            event_id = fields.get("event_id")
+            raw_fields = extract_hfish_fields(parsed_dict) if parsed_dict else {}
+            event_id = raw_fields.get("event_id")
+            if not event_id:
+                event_id = compute_event_id(raw_json)
             row_id = insert_raw_hfish_event(db_path, raw_json, event_id, parse_result)
             if row_id is not None:
                 count += 1
@@ -270,64 +279,8 @@ def cmd_normalize(args):
     db_path = config["database"]["path"]
     source_filter = args.source  # None 表示全部
 
-    from app.db import get_connection
-
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    normalized_count = 0
-    skipped_count = 0
-
-    # 标准化 SafeLine
-    if source_filter is None or source_filter == "safeline":
-        cursor.execute(
-            "SELECT id, raw_message, parsed_json FROM raw_safeline_logs "
-            "WHERE parse_status IN ('parsed', 'pending') "
-            "AND id NOT IN (SELECT raw_id FROM normalized_events WHERE raw_table = 'raw_safeline_logs')"
-        )
-        rows = cursor.fetchall()
-        for row in rows:
-            raw_id = row["id"]
-            parsed_json = row["parsed_json"]
-            if parsed_json:
-                import json
-                try:
-                    parsed_dict = json.loads(parsed_json)
-                    event = normalize_from_safeline(parsed_dict)
-                    if event:
-                        insert_normalized_event(db_path, event, "raw_safeline_logs", raw_id)
-                        normalized_count += 1
-                    else:
-                        skipped_count += 1
-                except (json.JSONDecodeError, Exception) as e:
-                    logger.debug("SafeLine 标准化跳过 #%d: %s", raw_id, e)
-                    skipped_count += 1
-            else:
-                skipped_count += 1
-
-    # 标准化 HFish
-    if source_filter is None or source_filter == "hfish":
-        cursor.execute(
-            "SELECT id, raw_data FROM raw_hfish_events "
-            "WHERE parse_status IN ('parsed', 'pending') "
-            "AND id NOT IN (SELECT raw_id FROM normalized_events WHERE raw_table = 'raw_hfish_events')"
-        )
-        rows = cursor.fetchall()
-        for row in rows:
-            raw_id = row["id"]
-            raw_data = row["raw_data"]
-            parse_result = extract_hfish_event(raw_data)
-            if parse_result["success"]:
-                fields = extract_fields(parse_result["parsed_dict"])
-                event = normalize_from_hfish(fields)
-                if event and event.get("src_ip"):
-                    insert_normalized_event(db_path, event, "raw_hfish_events", raw_id)
-                    normalized_count += 1
-                else:
-                    skipped_count += 1
-            else:
-                skipped_count += 1
-
-    print(f"[INFO] 标准化完成: 新增 {normalized_count} 条, 跳过 {skipped_count} 条")
+    result = run_normalize(db_path, source_filter=source_filter)
+    print(f"[INFO] 标准化完成: 新增 {result['normalized']} 条, 跳过 {result['skipped']} 条")
 
 
 def cmd_show_ip(args):

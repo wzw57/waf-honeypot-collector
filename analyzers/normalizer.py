@@ -4,6 +4,7 @@
 将 SafeLine 和 HFish 的解析结果统一为 normalized_events 标准格式。
 """
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -78,17 +79,76 @@ SEVERITY_MAP = {
     "5": "critical",
 }
 
+# HTTP 请求行正则: GET /path HTTP/1.1
+HTTP_REQUEST_LINE_RE = re.compile(
+    r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CONNECT|TRACE)\s+(\S+)\s+HTTP/\d\.\d",
+    re.IGNORECASE,
+)
 
-def normalize_severity(raw_severity: Any) -> str:
+# Host 头正则
+HTTP_HOST_RE = re.compile(r"^Host:\s*(\S+)", re.IGNORECASE | re.MULTILINE)
+# User-Agent 头正则
+HTTP_UA_RE = re.compile(r"^User-Agent:\s*(.+)", re.IGNORECASE | re.MULTILINE)
+
+
+# =============================================================================
+# HTTP 请求解析
+# =============================================================================
+
+
+def parse_http_request(request_content: Optional[str]) -> Dict[str, Optional[str]]:
     """
-    将原始严重级别映射为标准值。
+    从 HTTP 请求内容中解析 HTTP method / URI / Host / User-Agent。
+
+    适用于 HFish HTTP 蜜罐捕获到的原始请求。
 
     Args:
-        raw_severity: 原始严重级别。
+        request_content: 原始 HTTP 请求字符串（可能包含请求行和头）。
 
     Returns:
-        str: 标准严重级别：low / medium / high / critical。
+        dict: {
+            "http_method": str|None,
+            "uri": str|None,
+            "host": str|None,
+            "user_agent": str|None,
+        }
     """
+    result = {
+        "http_method": None,
+        "uri": None,
+        "host": None,
+        "user_agent": None,
+    }
+
+    if not request_content or not isinstance(request_content, str):
+        return result
+
+    # 提取请求行: GET /path HTTP/1.1
+    match = HTTP_REQUEST_LINE_RE.search(request_content)
+    if match:
+        result["http_method"] = match.group(1).upper()
+        result["uri"] = match.group(2)
+
+    # 提取 Host 头
+    host_match = HTTP_HOST_RE.search(request_content)
+    if host_match:
+        result["host"] = host_match.group(1)
+
+    # 提取 User-Agent 头
+    ua_match = HTTP_UA_RE.search(request_content)
+    if ua_match:
+        result["user_agent"] = ua_match.group(1).strip()
+
+    return result
+
+
+# =============================================================================
+# 标准化核心函数
+# =============================================================================
+
+
+def normalize_severity(raw_severity: Any) -> str:
+    """将原始严重级别映射为标准值。"""
     if raw_severity is None:
         return "low"
 
@@ -97,15 +157,7 @@ def normalize_severity(raw_severity: Any) -> str:
 
 
 def normalize_attack_type(raw_type: Any) -> str:
-    """
-    将原始攻击类型映射为标准名称。
-
-    Args:
-        raw_type: 原始攻击类型。
-
-    Returns:
-        str: 标准化攻击类型。无法映射时返回原始值。
-    """
+    """将原始攻击类型映射为标准名称。"""
     if raw_type is None:
         return "Unknown"
 
@@ -114,22 +166,11 @@ def normalize_attack_type(raw_type: Any) -> str:
 
 
 def normalize_event_time(raw_time: Any) -> Optional[str]:
-    """
-    标准化事件时间。
-
-    尝试多种常见时间格式。
-
-    Args:
-        raw_time: 原始时间值。
-
-    Returns:
-        str|None: ISO 8601 格式的时间字符串，解析失败返回 None。
-    """
+    """标准化事件时间，支持多种格式。"""
     if raw_time is None:
         return None
 
     if isinstance(raw_time, (int, float)):
-        # Unix 时间戳
         try:
             return datetime.fromtimestamp(raw_time, tz=timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
@@ -141,7 +182,6 @@ def normalize_event_time(raw_time: Any) -> Optional[str]:
     if not raw:
         return None
 
-    # 已经是 ISO 格式
     for fmt in [
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S",
@@ -163,15 +203,7 @@ def normalize_event_time(raw_time: Any) -> Optional[str]:
 
 
 def normalize_from_safeline(parsed_dict: Optional[Dict]) -> Optional[Dict[str, Any]]:
-    """
-    将 SafeLine 解析结果标准化为统一事件格式。
-
-    Args:
-        parsed_dict: SafeLine parser 返回的 parsed_dict。
-
-    Returns:
-        dict|None: 标准化事件字典，解析失败返回 None。
-    """
+    """将 SafeLine 解析结果标准化为统一事件格式。"""
     if not parsed_dict or not isinstance(parsed_dict, dict):
         return None
 
@@ -200,33 +232,37 @@ def normalize_from_hfish(parsed_fields: Optional[Dict]) -> Optional[Dict[str, An
     """
     将 HFish 解析结果标准化为统一事件格式。
 
-    Args:
-        parsed_fields: HFish parser 的 extract_fields() 返回的字段字典。
-
-    Returns:
-        dict|None: 标准化事件字典，解析失败返回 None。
+    对 HTTP 协议的蜜罐事件，从 request_content 中尝试解析
+    http_method / uri / host / user_agent。
     """
     if not parsed_fields or not isinstance(parsed_fields, dict):
         return None
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 确定协议
     protocol = parsed_fields.get("protocol") or "unknown"
+    protocol_upper = protocol.upper() if protocol else "UNKNOWN"
+
     http_method = None
     uri = None
     host = None
 
-    # 如果是 HTTP 协议，从 request_content 提取信息
-    if protocol.lower() in ("http", "https"):
-        http_method = "GET"  # 默认
-        uri = "/"
+    # 对 HTTP 协议，从 request_content 做轻量解析
+    request_content = parsed_fields.get("request_content")
+    if protocol_upper in ("HTTP", "HTTPS"):
+        http_info = parse_http_request(request_content)
+        http_method = http_info.get("http_method") or "GET"
+        uri = http_info.get("uri") or "/"
+        host = http_info.get("host")
+        # 如果 parser 层没提取到 user_agent，尝试从 HTTP 头中提取
+        if not parsed_fields.get("user_agent") and http_info.get("user_agent"):
+            parsed_fields["user_agent"] = http_info["user_agent"]
 
     # 攻击类型优先使用 event_type，其次用 protocol
     attack_type = parsed_fields.get("event_type") or protocol
 
     # 构建 payload：优先 command，其次 request_content
-    payload = parsed_fields.get("command") or parsed_fields.get("request_content")
+    payload = parsed_fields.get("command") or request_content
 
     return {
         "source": "hfish",
@@ -236,7 +272,7 @@ def normalize_from_hfish(parsed_fields: Optional[Dict]) -> Optional[Dict[str, An
         "src_port": parsed_fields.get("src_port"),
         "dst_ip": None,
         "dst_port": parsed_fields.get("target_port"),
-        "protocol": protocol.upper() if protocol else "UNKNOWN",
+        "protocol": protocol_upper,
         "http_method": http_method,
         "host": host,
         "uri": uri,

@@ -580,11 +580,21 @@ def get_extended_stats(db_path):
     conn = get_connection(db_path)
     cursor = conn.cursor()
 
+    # 白名单：只允许查询预期的表名，防止 SQL 注入
+    _ALLOWED_TABLES = {"raw_safeline_logs", "raw_hfish_events", "normalized_events"}
+    _ALLOWED_STATUS_TABLES = {"raw_safeline_logs", "raw_hfish_events"}
+
+    def _validate_table(table, allowed_set):
+        if table not in allowed_set:
+            raise ValueError(f"不允许查询的表: {table}")
+
     def count_table(table):
+        _validate_table(table, _ALLOWED_TABLES)
         cursor.execute(f"SELECT COUNT(*) as cnt FROM {table}")
         return cursor.fetchone()["cnt"]
 
     def count_by_status(table):
+        _validate_table(table, _ALLOWED_STATUS_TABLES)
         cursor.execute(
             f"SELECT parse_status, COUNT(*) as cnt FROM {table} GROUP BY parse_status"
         )
