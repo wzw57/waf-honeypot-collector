@@ -1,0 +1,70 @@
+[
+    {
+        "description": "SSH Brute Force - 完整事件",
+        "raw_data": "{\"id\":\"h_001\",\"time\":\"2026-06-10T10:30:00+0800\",\"src_ip\":\"10.0.0.100\",\"src_port\":38888,\"type\":\"SSH\",\"dst_port\":22,\"username\":\"root\",\"password\":\"admin123\",\"node\":\"hfish-node-1\",\"location\":\"CN\",\"severity\":\"high\"}",
+        "expected_fields": {
+            "id": "h_001",
+            "src_ip": "10.0.0.100",
+            "type": "SSH",
+            "username": "root",
+            "password": "admin123"
+        }
+    },
+    {
+        "description": "Redis 未授权探测",
+        "raw_data": "{\"id\":\"h_002\",\"time\":\"2026-06-10T10:31:00+0800\",\"attacker_ip\":\"10.0.0.101\",\"source_port\":40000,\"proto\":\"Redis\",\"target_port\":6379,\"cmd\":\"INFO\",\"node_name\":\"hfish-node-1\",\"geo\":\"US\",\"level\":\"medium\"}",
+        "expected_fields": {
+            "id": "h_002",
+            "attacker_ip": "10.0.0.101",
+            "proto": "Redis",
+            "cmd": "INFO"
+        }
+    },
+    {
+        "description": "MySQL 弱口令尝试",
+        "raw_data": "{\"id\":\"h_003\",\"event_time\":\"2026-06-10T10:32:00+0800\",\"source_ip\":\"10.0.0.102\",\"src_port\":45000,\"service\":\"MySQL\",\"local_port\":3306,\"user_name\":\"admin\",\"passwd\":\"123456\",\"content\":\"mysql login attempt\",\"honeypot\":\"mysql-honeypot-1\",\"country\":\"RU\",\"action\":\"login\"}",
+        "expected_fields": {
+            "id": "h_003",
+            "source_ip": "10.0.0.102",
+            "service": "MySQL",
+            "user_name": "admin",
+            "passwd": "123456"
+        }
+    },
+    {
+        "description": "HTTP 蜜罐探测",
+        "raw_data": "{\"id\":\"h_004\",\"event_time\":\"2026-06-10T10:33:00+0800\",\"src_ip\":\"10.0.0.103\",\"src_port\":50000,\"protocol\":\"HTTP\",\"dst_port\":8080,\"request\":\"GET /manager/html HTTP/1.1\",\"user_agent\":\"Mozilla/5.0 (compatible; Nmap Scripting Engine)\",\"ua\":\"Mozilla/5.0 (compatible; Nmap Scripting Engine)\",\"node_name\":\"web-honeypot-1\",\"location\":\"KR\",\"event_type\":\"Web Probe\",\"risk_level\":\"medium\"}",
+        "expected_fields": {
+            "id": "h_004",
+            "src_ip": "10.0.0.103",
+            "protocol": "HTTP",
+            "user_agent": "Mozilla/5.0 (compatible; Nmap Scripting Engine)"
+        }
+    },
+    {
+        "description": "Telnet 爆破",
+        "raw_data": "{\"id\":\"h_005\",\"timestamp\":\"2026-06-10T10:34:00\",\"ip\":\"10.0.0.104\",\"port\":52000,\"type\":\"Telnet\",\"target_port\":23,\"user\":\"admin\",\"pass\":\"password\",\"cmd\":\"enable\",\"input\":\"show running-config\",\"node\":\"telnet-honeypot\",\"location\":\"\",\"level\":\"high\"}",
+        "expected_fields": {
+            "id": "h_005",
+            "ip": "10.0.0.104",
+            "type": "Telnet",
+            "user": "admin",
+            "pass": "password"
+        }
+    },
+    {
+        "description": "无效 JSON",
+        "raw_data": "this is not json at all",
+        "expect_parse_fail": true
+    },
+    {
+        "description": "空字符串",
+        "raw_data": "",
+        "expect_parse_fail": true
+    },
+    {
+        "description": "空对象",
+        "raw_data": "{}",
+        "expected_fields": {}
+    }
+]

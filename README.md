@@ -42,10 +42,29 @@ python main.py recv-safeline
 python scripts/mock_syslog.py --count 5
 
 # 6. 查看入库日志
-python main.py show-latest
+python main.py show-latest --mode raw_safeline
 
 # 7. 查看统计
 python main.py stats
+```
+
+### Phase 2: HFish 蜜罐接入与事件标准化
+
+```bash
+# 8. 单次拉取 HFish 攻击日志
+python main.py collect-hfish
+
+# 9. 循环拉取 HFish 日志（前台阻塞，默认间隔 60 秒）
+python main.py collect-hfish-loop
+
+# 10. 标准化待处理的原始日志
+python main.py normalize
+
+# 11. 查看标准化事件
+python main.py show-latest
+
+# 12. 按 IP 查询
+python main.py show-ip --ip 10.0.0.1
 ```
 
 ### SafeLine WAF 配置
@@ -76,14 +95,18 @@ python scripts/mock_syslog.py --count 3 --invalid
 
 ## CLI 命令
 
-### 已实现命令（Phase 0-1）
+### 已实现命令（Phase 0-2）
 
 | 命令 | 说明 |
 |------|------|
 | `init-db` | 初始化数据库 |
 | `recv-safeline` | 启动 SafeLine Syslog 接收 |
-| `show-latest` | 查看最近事件 |
-| `stats` | 查看统计信息 |
+| `show-latest` | 查看最近事件（支持 `--source`, `--mode` 筛选） |
+| `stats` | 查看扩展统计信息（含所有数据源） |
+| `collect-hfish` | 单次拉取 HFish 日志 |
+| `collect-hfish-loop` | 循环拉取 HFish 日志（`--interval` 指定间隔） |
+| `normalize` | 标准化待处理的原始日志（支持 `--source` 筛选） |
+| `show-ip --ip 1.2.3.4` | 按 IP 查询标准化事件 |
 
 ### 规划中命令（后续 Phase）
 

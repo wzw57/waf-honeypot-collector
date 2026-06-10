@@ -352,3 +352,274 @@ def get_basic_stats(db_path):
         "pending": status_stats.get("pending", 0),
         "top_senders": top_senders,
     }
+
+
+# =============================================================================
+# HFish 原始日志操作
+# =============================================================================
+
+
+def insert_raw_hfish_event(db_path, raw_data, event_id, parse_result):
+    """
+    插入一条 HFish 原始日志（使用 INSERT OR IGNORE 去重）。
+
+    Args:
+        db_path: 数据库文件路径。
+        raw_data: API 返回的完整 JSON 字符串。
+        event_id: HFish 事件唯一 ID（用于去重）。
+        parse_result: Parser 返回的解析结果字典。
+
+    Returns:
+        int|None: 插入记录的自增 ID，去重跳过时返回 None。
+    """
+    now = now_iso()
+
+    parse_status = "pending"
+    if parse_result.get("success"):
+        parse_status = "parsed"
+    else:
+        parse_status = "failed"
+
+    error_message = parse_result.get("error_message")
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO raw_hfish_events
+                (raw_data, event_id, parse_status, error_message,
+                 received_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (raw_data, event_id, parse_status, error_message, now, now),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        # event_id 重复，去重跳过
+        logger.debug("HFish 事件去重跳过: %s", event_id)
+        return None
+
+
+def get_latest_hfish_events(db_path, limit=20):
+    """
+    获取最近的 HFish 日志。
+
+    Args:
+        db_path: 数据库文件路径。
+        limit: 返回条数。
+
+    Returns:
+        list[dict]: 日志记录列表。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, received_at, event_id, parse_status, error_message,
+               substr(raw_data, 1, 200) as raw_data_preview,
+               length(raw_data) as raw_length
+        FROM raw_hfish_events
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+# =============================================================================
+# 标准化事件操作
+# =============================================================================
+
+
+def insert_normalized_event(db_path, event_dict, raw_table, raw_id):
+    """
+    插入一条标准化事件。
+
+    Args:
+        db_path: 数据库文件路径。
+        event_dict: 标准化事件字典（由 normalizer 生成）。
+        raw_table: 来源原始表名。
+        raw_id: 来源原始表记录 ID。
+
+    Returns:
+        int: 插入记录的自增 ID。
+    """
+    now = now_iso()
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO normalized_events
+            (source, source_event_id, event_time, src_ip, src_port,
+             dst_ip, dst_port, protocol, http_method, host, uri,
+             user_agent, attack_type, severity, payload,
+             raw_table, raw_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_dict.get("source", "unknown"),
+            event_dict.get("source_event_id", ""),
+            event_dict.get("event_time", now),
+            event_dict.get("src_ip", ""),
+            event_dict.get("src_port"),
+            event_dict.get("dst_ip"),
+            event_dict.get("dst_port"),
+            event_dict.get("protocol"),
+            event_dict.get("http_method"),
+            event_dict.get("host"),
+            event_dict.get("uri"),
+            event_dict.get("user_agent"),
+            event_dict.get("attack_type"),
+            event_dict.get("severity"),
+            event_dict.get("payload"),
+            raw_table,
+            raw_id,
+            now,
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_latest_normalized_events(db_path, limit=20, source=None):
+    """
+    获取最近的标准化事件。
+
+    Args:
+        db_path: 数据库文件路径。
+        limit: 返回条数。
+        source: 数据源过滤（"safeline"/"hfish"/None 表示全部）。
+
+    Returns:
+        list[dict]: 标准化事件列表。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    if source:
+        cursor.execute(
+            """
+            SELECT id, source, source_event_id, event_time, src_ip, src_port,
+                   protocol, http_method, host, uri, attack_type, severity,
+                   raw_table, raw_id, created_at
+            FROM normalized_events
+            WHERE source = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (source, limit),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT id, source, source_event_id, event_time, src_ip, src_port,
+                   protocol, http_method, host, uri, attack_type, severity,
+                   raw_table, raw_id, created_at
+            FROM normalized_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+
+    rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_events_by_ip(db_path, src_ip, limit=100):
+    """
+    按 IP 查询标准化事件。
+
+    Args:
+        db_path: 数据库文件路径。
+        src_ip: 源 IP 地址。
+        limit: 返回条数。
+
+    Returns:
+        list[dict]: 标准化事件列表。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, source, source_event_id, event_time, src_ip, src_port,
+               protocol, http_method, host, uri, attack_type, severity, payload,
+               raw_table, raw_id, created_at
+        FROM normalized_events
+        WHERE src_ip = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (src_ip, limit),
+    )
+    rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+# =============================================================================
+# 增强统计（含 HFish 和标准化事件）
+# =============================================================================
+
+
+def get_extended_stats(db_path):
+    """
+    获取扩展统计信息（含所有数据源）。
+
+    Args:
+        db_path: 数据库文件路径。
+
+    Returns:
+        dict: 包含 safeline / hfish / normalized 的统计信息。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    def count_table(table):
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM {table}")
+        return cursor.fetchone()["cnt"]
+
+    def count_by_status(table):
+        cursor.execute(
+            f"SELECT parse_status, COUNT(*) as cnt FROM {table} GROUP BY parse_status"
+        )
+        return {row["parse_status"]: row["cnt"] for row in cursor.fetchall()}
+
+    def count_by_source():
+        cursor.execute(
+            "SELECT source, COUNT(*) as cnt FROM normalized_events GROUP BY source"
+        )
+        return {row["source"]: row["cnt"] for row in cursor.fetchall()}
+
+    safeline_total = count_table("raw_safeline_logs")
+    hfish_total = count_table("raw_hfish_events")
+    normalized_total = count_table("normalized_events")
+
+    safeline_status = count_by_status("raw_safeline_logs")
+    hfish_status = count_by_status("raw_hfish_events")
+
+    source_dist = count_by_source()
+
+    return {
+        "safeline": {
+            "total": safeline_total,
+            "parsed": safeline_status.get("parsed", 0),
+            "failed": safeline_status.get("failed", 0),
+            "pending": safeline_status.get("pending", 0),
+        },
+        "hfish": {
+            "total": hfish_total,
+            "parsed": hfish_status.get("parsed", 0),
+            "failed": hfish_status.get("failed", 0),
+            "pending": hfish_status.get("pending", 0),
+        },
+        "normalized": {
+            "total": normalized_total,
+            "source_distribution": source_dist,
+        },
+    }
