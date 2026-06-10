@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}事件列表 — WAF Honeypot Collector{% endblock %}
+{% block content %}
+<h3 class="my-4"><i class="bi bi-list-ul"></i> 事件列表 <small class="text-muted">共 {{ total }} 条</small></h3>
+<form class="row g-2 mb-3" method="get">
+  <div class="col-auto">
+    <select name="source" class="form-select form-select-sm">
+      <option value="">全部来源</option>
+      <option value="safeline" {% if source_filter == 'safeline' %}selected{% endif %}>SafeLine</option>
+      <option value="hfish" {% if source_filter == 'hfish' %}selected{% endif %}>HFish</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <select name="attack_type" class="form-select form-select-sm">
+      <option value="">全部类型</option>
+      {% for t in attack_types %}
+      <option value="{{ t }}" {% if attack_type_filter == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <input type="text" name="ip" class="form-control form-control-sm" placeholder="源 IP" value="{{ ip_filter }}">
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-search"></i> 筛选</button>
+  </div>
+</form>
+
+<table class="table table-striped table-hover table-sm">
+  <thead class="table-dark">
+    <tr><th>ID</th><th>来源</th><th>时间</th><th>源 IP</th><th>攻击类型</th><th>严重级别</th><th>协议</th><th>URI</th></tr>
+  </thead>
+  <tbody>
+    {% for e in events %}
+    <tr>
+      <td><a href="/profile/{{ e.src_ip }}">{{ e.id }}</a></td>
+      <td><span class="badge bg-{{ 'primary' if e.source == 'safeline' else 'success' }}">{{ e.source }}</span></td>
+      <td class="small">{{ e.event_time[:19] }}</td>
+      <td><a href="/profile/{{ e.src_ip }}">{{ e.src_ip }}</a></td>
+      <td>{{ e.attack_type or '-' }}</td>
+      <td>{% set sev = e.severity or 'low' %}
+        <span class="badge bg-{{ 'danger' if sev == 'critical' else 'warning' if sev == 'high' else 'info' if sev == 'medium' else 'secondary' }}">{{ sev }}</span>
+      </td>
+      <td>{{ e.protocol or '-' }}</td>
+      <td class="event-preview" title="{{ e.uri or '' }}">{{ e.uri or '-' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<nav><ul class="pagination pagination-sm">
+  {% for p in range(1, total_pages + 1) %}
+  <li class="page-item {{ 'active' if p == page else '' }}">
+    <a class="page-link" href="?page={{ p }}{% if source_filter %}&source={{ source_filter }}{% endif %}{% if attack_type_filter %}&attack_type={{ attack_type_filter }}{% endif %}{% if ip_filter %}&ip={{ ip_filter }}{% endif %}">{{ p }}</a>
+  </li>
+  {% endfor %}
+</ul></nav>
+{% endif %}
+{% endblock %}

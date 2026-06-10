@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}攻击类型分布 — WAF Honeypot Collector{% endblock %}
+{% block content %}
+<h3 class="my-4"><i class="bi bi-pie-chart"></i> 攻击类型分布</h3>
+<div class="card stat-card"><div class="card-body">
+  <div id="chart" style="height:500px;"></div>
+</div></div>
+<script>
+const chart = echarts.init(document.getElementById('chart'));
+chart.setOption({
+  tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+  series: [{
+    type: 'pie', radius: ['30%', '60%'],
+    data: [{% for d in data %}{ value: {{ d.cnt }}, name: '{{ d.attack_type|e }}' }{% if not loop.last %},{% endif %}{% endfor %}],
+    label: { formatter: '{b}\n{c} ({d}%)', fontSize: 12 }
+  }]
+});
+window.addEventListener('resize', () => chart.resize());
+</script>
+{% endblock %}

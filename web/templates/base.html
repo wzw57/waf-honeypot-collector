@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}WAF Honeypot Collector{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/">
+        <i class="bi bi-shield-shaded"></i> WAF Honeypot Collector
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navMenu">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house"></i> 概览</a></li>
+          <li class="nav-item"><a class="nav-link" href="/events"><i class="bi bi-list-ul"></i> 事件</a></li>
+          <li class="nav-item"><a class="nav-link" href="/top-ip"><i class="bi bi-arrow-up-circle"></i> Top IP</a></li>
+          <li class="nav-item"><a class="nav-link" href="/attack-types"><i class="bi bi-pie-chart"></i> 攻击类型</a></li>
+          <li class="nav-item"><a class="nav-link" href="/trends"><i class="bi bi-graph-up"></i> 趋势</a></li>
+          <li class="nav-item"><a class="nav-link" href="/high-risk"><i class="bi bi-exclamation-triangle"></i> 高风险</a></li>
+          <li class="nav-item"><a class="nav-link" href="/iocs"><i class="bi bi-shield-exclamation"></i> IOC</a></li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid px-4">
+    {% block content %}{% endblock %}
+  </div>
+
+  <footer class="container-fluid px-4">
+    <hr>
+    <p>WAF Honeypot Collector — 基于 SafeLine WAF 与 HFish 蜜罐的安全事件采集与关联分析平台</p>
+  </footer>
+</body>
+</html>

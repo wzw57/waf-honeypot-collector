@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}趋势 — WAF Honeypot Collector{% endblock %}
+{% block content %}
+<h3 class="my-4"><i class="bi bi-graph-up"></i> 事件趋势</h3>
+<div class="card stat-card"><div class="card-body">
+  <div id="chart" style="height:400px;"></div>
+</div></div>
+<script>
+const chart = echarts.init(document.getElementById('chart'));
+const days = [{% for d in trend_data %}'{{ d.day }}'{% if not loop.last %},{% endif %}{% endfor %}];
+const safeline = [{% for d in trend_data %}{{ d.safeline }}{% if not loop.last %},{% endif %}{% endfor %}];
+const hfish = [{% for d in trend_data %}{{ d.hfish }}{% if not loop.last %},{% endif %}{% endfor %}];
+chart.setOption({
+  tooltip: { trigger: 'axis' },
+  legend: { data: ['SafeLine WAF', 'HFish 蜜罐'] },
+  xAxis: { type: 'category', data: days, axisLabel: { rotate: 45 } },
+  yAxis: { type: 'value', minInterval: 1 },
+  series: [
+    { name: 'SafeLine WAF', type: 'line', data: safeline, smooth: true, itemStyle: { color: '#0d6efd' } },
+    { name: 'HFish 蜜罐', type: 'line', data: hfish, smooth: true, itemStyle: { color: '#198754' } }
+  ]
+});
+window.addEventListener('resize', () => chart.resize());
+</script>
+{% endblock %}

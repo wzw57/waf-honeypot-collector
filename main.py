@@ -523,6 +523,24 @@ def cmd_ai_summary(args):
         print("[WARN] AI 研判失败，请检查 API 配置和网络连接")
 
 
+def cmd_web(args):
+    """启动 Web Dashboard。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    web_config = config.get("web", {})
+    host = web_config.get("host", "127.0.0.1")
+    port = web_config.get("port", 8000)
+
+    from web.server import create_app
+    import uvicorn
+
+    app = create_app(db_path, config)
+    print(f"[INFO] Web Dashboard 启动: http://{host}:{port}")
+    print("[INFO] 默认仅监听 127.0.0.1，不直接暴露公网")
+    print("[INFO] 按 Ctrl+C 停止")
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 def cmd_report(args):
     """生成攻击源 Markdown 报告。"""
     config = get_config(args.config)
@@ -612,6 +630,9 @@ def main():
     # AI 辅助研判
     python main.py ai-summary --ip 10.0.0.1
     python main.py report --ip 10.0.0.1 --with-ai
+
+    # Web Dashboard
+    python main.py web
         """,
     )
 
@@ -728,6 +749,9 @@ def main():
     p_ai = subparsers.add_parser("ai-summary", help="使用 AI 生成攻击摘要")
     p_ai.add_argument("--ip", type=str, required=True, help="攻击源 IP")
 
+    # --- Phase 6 ---
+    subparsers.add_parser("web", help="启动 Web Dashboard")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -759,6 +783,7 @@ def main():
         "map-attack": cmd_map_attack,
         "report": cmd_report,
         "ai-summary": cmd_ai_summary,
+        "web": cmd_web,
     }
 
     try:

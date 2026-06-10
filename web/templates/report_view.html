@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}报告 — {{ ip }}{% endblock %}
+{% block content %}
+<h3 class="my-4"><i class="bi bi-file-text"></i> 攻击源分析报告: {{ ip }}</h3>
+{% if not_found %}
+<div class="alert alert-info">该 IP 暂无数据。</div>
+{% else %}
+<div class="mb-3">
+  <a href="/profile/{{ ip }}" class="btn btn-outline-secondary"><i class="bi bi-person"></i> 返回画像</a>
+</div>
+<div class="report-content"><pre style="white-space:pre-wrap;font-family:inherit;">{{ report_content }}</pre></div>
+{% endif %}
+{% endblock %}

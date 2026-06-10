@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}概览 — WAF Honeypot Collector{% endblock %}
+{% block content %}
+<h3 class="my-4"><i class="bi bi-house"></i> 系统概览</h3>
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="card stat-card text-bg-primary"><div class="card-body"><div class="stat-number">{{ total_events }}</div><div class="stat-label">总采集事件</div></div></div></div>
+  <div class="col-md-3"><div class="card stat-card text-bg-success"><div class="card-body"><div class="stat-number">{{ normalized }}</div><div class="stat-label">标准化事件</div></div></div></div>
+  <div class="col-md-3"><div class="card stat-card text-bg-warning"><div class="card-body"><div class="stat-number">{{ total_profiles }}</div><div class="stat-label">攻击源 IP</div></div></div></div>
+  <div class="col-md-3"><div class="card stat-card text-bg-danger"><div class="card-body"><div class="stat-number">{{ high_risk + critical_risk }}</div><div class="stat-label">高风险 IP</div></div></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card stat-card"><div class="card-header">数据源分布</div><div class="card-body">
+      <div id="sourceChart" style="height:260px;"></div>
+    </div></div>
+  </div>
+  <div class="col-md-6">
+    <div class="card stat-card"><div class="card-header">风险等级分布</div><div class="card-body">
+      <div id="riskChart" style="height:260px;"></div>
+    </div></div>
+  </div>
+</div>
+
+<script>
+const sourceChart = echarts.init(document.getElementById('sourceChart'));
+sourceChart.setOption({
+  tooltip: { trigger: 'item' },
+  series: [{
+    type: 'pie', radius: ['40%', '70%'],
+    data: [
+      { value: {{ safeline_total }}, name: 'SafeLine WAF', itemStyle: { color: '#0d6efd' } },
+      { value: {{ hfish_total }}, name: 'HFish 蜜罐', itemStyle: { color: '#198754' } }
+    ],
+    label: { formatter: '{b}: {c}' }
+  }]
+});
+
+const riskChart = echarts.init(document.getElementById('riskChart'));
+riskChart.setOption({
+  tooltip: { trigger: 'item' },
+  series: [{
+    type: 'pie', radius: ['40%', '70%'],
+    data: [
+      { value: {{ high_risk }}, name: '高风险', itemStyle: { color: '#fd7e14' } },
+      { value: {{ critical_risk }}, name: '严重', itemStyle: { color: '#dc3545' } },
+      { value: {{ total_profiles - high_risk - critical_risk }}, name: '低/中', itemStyle: { color: '#6c757d' } }
+    ]
+  }]
+});
+window.addEventListener('resize', () => { sourceChart.resize(); riskChart.resize(); });
+</script>
+{% endblock %}
