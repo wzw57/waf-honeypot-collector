@@ -82,8 +82,55 @@ def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str
     safeline_ids_str = ", ".join(safeline_raw_ids) if safeline_raw_ids else "无"
     hfish_ids_str = ", ".join(hfish_raw_ids) if hfish_raw_ids else "无"
 
-    # 7. 处置建议（基于规则）
+    # 7. 处置建议（基于规则，可选 AI 增强）
     remediation = _generate_remediation(profile)
+
+    # AI 辅助内容（if enabled）
+    ai_summary_text = ""
+    ai_remediation_text = ""
+    if with_ai:
+        try:
+            from ai.deepseek_client import DeepSeekClient
+            from app.config import get_config as get_app_config
+            import json as _json
+
+            cfg = get_app_config()
+            client = DeepSeekClient(cfg.get("deepseek", {}))
+
+            if client.is_available():
+                # 构建 AI 输入
+                tags_raw = profile.get("tags", "[]")
+                try:
+                    tags_list = _json.loads(tags_raw) if isinstance(tags_raw, str) else (tags_raw or [])
+                except Exception:
+                    tags_list = []
+
+                try:
+                    at = _json.loads(profile["attack_types"]) if profile.get("attack_types") else {}
+                except Exception:
+                    at = {}
+
+                ip_data = {
+                    "ip": src_ip,
+                    "risk_score": profile.get("risk_score", 0),
+                    "risk_level": profile.get("risk_level", "low"),
+                    "tags": tags_list,
+                    "total_events": profile.get("total_count", 0),
+                    "safeline_events": profile.get("safeline_count", 0),
+                    "hfish_events": profile.get("hfish_count", 0),
+                    "attack_types": at,
+                    "first_seen": profile.get("first_seen", ""),
+                    "last_seen": profile.get("last_seen", ""),
+                    "is_multi_source": bool(profile.get("is_multi_source")),
+                    "sample_payloads": [ev.get("payload", "") for ev in events if ev.get("payload")][:5],
+                    "ioc_count": len(iocs_filtered),
+                }
+
+                ai_summary_text = client.generate_summary(ip_data, cache_db_path=db_path)
+                ai_remediation_text = client.generate_remediation(profile, cache_db_path=db_path)
+
+        except Exception as e:
+            logger.warning("AI 辅助研判失败（已降级）: %s", e)
 
     # 8. 时间信息
     duration = _compute_duration(
@@ -103,6 +150,13 @@ def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # 构建 AI 章节
+    ai_section = ""
+    if ai_summary_text:
+        ai_section += f"\n## AI 辅助分析\n\n*以下内容由 AI 生成，仅供参考*\n\n{ai_summary_text}\n"
+    if ai_remediation_text:
+        ai_section += f"\n### AI 处置建议\n\n{ai_remediation_text}\n"
+
     # 渲染模板
     template = _load_template()
     report = template.render(
@@ -119,6 +173,7 @@ def generate_report(db_path, src_ip: str, with_ai: bool = False) -> Optional[str
         safeline_raw_ids=safeline_ids_str,
         hfish_raw_ids=hfish_ids_str,
         generated_at=now,
+        ai_section=ai_section,
     )
 
     return report

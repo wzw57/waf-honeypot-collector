@@ -446,6 +446,74 @@ def cmd_map_attack(args):
     print(f"[INFO] ATT&CK 映射完成: 新增 {count} 条")
 
 
+def cmd_ai_summary(args):
+    """使用 AI 生成攻击摘要。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    ip = args.ip
+
+    from app.db import get_profile_by_ip
+    from ai.deepseek_client import DeepSeekClient
+    from app.db import get_connection, get_iocs
+
+    profile = get_profile_by_ip(db_path, ip)
+    if not profile:
+        print(f"[INFO] IP {ip} 暂无画像数据")
+        return
+
+    # 构建结构化输入
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT payload FROM normalized_events WHERE src_ip = ? AND payload IS NOT NULL",
+        (ip,),
+    )
+    payloads = [r["payload"] for r in cursor.fetchall() if r["payload"]]
+
+    iocs = get_iocs(db_path, limit=100)
+    ip_iocs = [i for i in iocs if i.get("src_ip") == ip]
+
+    import json
+    try:
+        attack_types = json.loads(profile["attack_types"]) if profile.get("attack_types") else {}
+    except (json.JSONDecodeError, TypeError):
+        attack_types = {}
+
+    ip_data = {
+        "ip": ip,
+        "risk_score": profile.get("risk_score", 0),
+        "risk_level": profile.get("risk_level", "low"),
+        "tags": json.loads(profile["tags"]) if isinstance(profile.get("tags"), str) else (profile.get("tags") or []),
+        "total_events": profile.get("total_count", 0),
+        "safeline_events": profile.get("safeline_count", 0),
+        "hfish_events": profile.get("hfish_count", 0),
+        "attack_types": attack_types,
+        "first_seen": profile.get("first_seen", ""),
+        "last_seen": profile.get("last_seen", ""),
+        "is_multi_source": bool(profile.get("is_multi_source")),
+        "sample_payloads": payloads[:5],
+        "ioc_count": len(ip_iocs),
+    }
+
+    client = DeepSeekClient(config.get("deepseek", {}))
+    if not client.is_available():
+        print("[INFO] DeepSeek API 未启用或未配置 API Key")
+        print("[INFO] 请设置环境变量 DEEPSEEK_API_KEY，并将 deepseek.enabled 设为 true")
+        return
+
+    print(f"[INFO] 正在请求 AI 研判... (IP: {ip})")
+    summary = client.generate_summary(ip_data, cache_db_path=db_path)
+    if summary:
+        print(f"\n{'='*60}")
+        print(f"  AI 攻击行为摘要 — {ip}")
+        print(f"{'='*60}")
+        print(summary)
+        print("=" * 60)
+    else:
+        print("[WARN] AI 研判失败，请检查 API 配置和网络连接")
+
+
 def cmd_report(args):
     """生成攻击源 Markdown 报告。"""
     config = get_config(args.config)
@@ -453,12 +521,13 @@ def cmd_report(args):
     ip = args.ip
     output = args.output
     all_ips = args.all
+    with_ai = args.with_ai
 
     from reports.markdown_report import generate_report, generate_all_reports
 
     if all_ips:
         out_dir = output or "reports/output"
-        count = generate_all_reports(db_path, output_dir=out_dir)
+        count = generate_all_reports(db_path, output_dir=out_dir, with_ai=with_ai)
         print(f"[INFO] 已为 {count} 个 IP 生成报告，输出目录: {out_dir}")
         return
 
@@ -466,7 +535,7 @@ def cmd_report(args):
         print("[ERROR] 请指定 --ip 或使用 --all")
         return
 
-    report = generate_report(db_path, ip)
+    report = generate_report(db_path, ip, with_ai=with_ai)
 
     if not report:
         print(f"[INFO] IP {ip} 暂无数据，无法生成报告")
@@ -525,7 +594,9 @@ def main():
     python main.py report --ip 10.0.0.1 --output report.md
     python main.py report --all
 
-更多命令将在后续 Phase 中添加。
+    # AI 辅助研判
+    python main.py ai-summary --ip 10.0.0.1
+    python main.py report --ip 10.0.0.1 --with-ai
         """,
     )
 
@@ -633,6 +704,14 @@ def main():
         "--all", action="store_true",
         help="为所有已画像的 IP 生成报告",
     )
+    p_report.add_argument(
+        "--with-ai", action="store_true",
+        help="启用 AI 辅助研判（需配置 DeepSeek API）",
+    )
+
+    # --- Phase 5 ---
+    p_ai = subparsers.add_parser("ai-summary", help="使用 AI 生成攻击摘要")
+    p_ai.add_argument("--ip", type=str, required=True, help="攻击源 IP")
 
     args = parser.parse_args()
 
@@ -664,6 +743,7 @@ def main():
         "top-ip": cmd_top_ip,
         "map-attack": cmd_map_attack,
         "report": cmd_report,
+        "ai-summary": cmd_ai_summary,
     }
 
     try:
