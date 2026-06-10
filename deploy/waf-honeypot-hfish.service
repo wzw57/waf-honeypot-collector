@@ -1,0 +1,22 @@
+[Unit]
+Description=WAF Honeypot Collector - HFish API Collector
+Documentation=https://github.com/wzw57/waf-honeypot-collector
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/waf-honeypot-collector
+ExecStart=/usr/bin/python3 /home/ubuntu/waf-honeypot-collector/main.py collect-hfish-loop
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+# 请设置以下环境变量（或写入 /etc/environment）
+# Environment=HFISH_API_TOKEN=your-token-here
+# Environment=HFISH_PASSWORD=your-password-here
+# Environment=DEEPSEEK_API_KEY=your-key-here
+
+[Install]
+WantedBy=multi-user.target

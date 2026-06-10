@@ -1,0 +1,18 @@
+[Unit]
+Description=WAF Honeypot Collector - Web Dashboard
+Documentation=https://github.com/wzw57/waf-honeypot-collector
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/waf-honeypot-collector
+ExecStart=/usr/bin/python3 /home/ubuntu/waf-honeypot-collector/main.py web
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
