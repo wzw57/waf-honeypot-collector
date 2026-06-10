@@ -17,7 +17,7 @@ _local = threading.local()
 
 def get_connection(db_path):
     """
-    获取数据库连接（线程本地单例）。
+    获取数据库连接（线程本地单例，按路径缓存）。
 
     Args:
         db_path: SQLite 数据库文件路径。
@@ -30,6 +30,15 @@ def get_connection(db_path):
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA journal_mode=WAL")
         _local.conn.execute("PRAGMA foreign_keys=ON")
+        _local.conn_db_path = db_path
+    elif _local.conn_db_path != db_path:
+        # 路径变化时重新连接
+        _local.conn.close()
+        _local.conn = sqlite3.connect(db_path)
+        _local.conn.row_factory = sqlite3.Row
+        _local.conn.execute("PRAGMA journal_mode=WAL")
+        _local.conn.execute("PRAGMA foreign_keys=ON")
+        _local.conn_db_path = db_path
     return _local.conn
 
 
@@ -219,6 +228,16 @@ def init_db(db_path):
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_mappings_src_ip
         ON attack_mappings(src_ip)
+    """)
+
+    # ========== ioc_extraction_status — IOC 提取状态 ==========
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ioc_extraction_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_event_id INTEGER UNIQUE NOT NULL,
+            extracted_at TEXT NOT NULL,
+            ioc_count INTEGER NOT NULL DEFAULT 0
+        )
     """)
 
     # ========== ai_analysis_cache — AI 分析缓存（可选） ==========
@@ -791,3 +810,76 @@ def get_profile_stats(db_path):
         "level_distribution": level_dist,
         "multi_source_count": multi_source,
     }
+
+
+# =============================================================================
+# IOC 提取状态
+# =============================================================================
+
+
+def mark_ioc_extracted(db_path, normalized_event_id, ioc_count):
+    """
+    标记一条标准化事件的 IOC 已完成提取。
+
+    Args:
+        db_path: 数据库文件路径。
+        normalized_event_id: 标准化事件 ID。
+        ioc_count: 提取出的 IOC 数量。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    now = now_iso()
+    cursor.execute(
+        """
+        INSERT INTO ioc_extraction_status
+            (normalized_event_id, extracted_at, ioc_count)
+        VALUES (?, ?, ?)
+        ON CONFLICT(normalized_event_id) DO UPDATE SET
+            extracted_at = excluded.extracted_at,
+            ioc_count = excluded.ioc_count
+        """,
+        (normalized_event_id, now, ioc_count),
+    )
+    conn.commit()
+
+
+def get_unprocessed_event_ids(db_path):
+    """
+    获取尚未提取 IOC 的 normalizd_event_id 列表。
+
+    Args:
+        db_path: 数据库文件路径。
+
+    Returns:
+        list[int]: 未处理的标准化事件 ID 列表。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT n.id FROM normalized_events n
+        WHERE n.id NOT IN (
+            SELECT normalized_event_id FROM ioc_extraction_status
+        )
+        ORDER BY n.id ASC
+    """)
+    return [r["id"] for r in cursor.fetchall()]
+
+
+def count_ioc_extraction_status(db_path):
+    """
+    统计 IOC 提取状态。
+
+    Args:
+        db_path: 数据库文件路径。
+
+    Returns:
+        dict: 已处理事件数和 IOC 总数。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(*) as events, COALESCE(SUM(ioc_count), 0) as iocs
+        FROM ioc_extraction_status
+    """)
+    row = cursor.fetchone()
+    return {"events": row["events"], "iocs": row["iocs"]}

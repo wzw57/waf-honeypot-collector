@@ -114,9 +114,11 @@ def extract_iocs(event: Dict[str, Any]) -> List[Dict[str, Any]]:
             if ext not in STATIC_EXTENSIONS:
                 add_ioc("uri", uri_stripped)
 
-    # 4. URL（host + uri）
+    # 4. URL（host + uri，根据 protocol 选择 scheme）
+    protocol = event.get("protocol") or ""
+    scheme = "https://" if protocol.upper() == "HTTPS" else "http://"
     if host and uri:
-        full_url = f"http://{host}{uri}"
+        full_url = f"{scheme}{host}{uri}"
         add_ioc("url", full_url)
 
     # 5. User-Agent
@@ -161,6 +163,8 @@ def extract_iocs(event: Dict[str, Any]) -> List[Dict[str, Any]]:
 def extract_all_pending(db_path) -> int:
     """
     遍历所有尚未提取 IOC 的标准化事件，提取并入库。
+    幂等：根据 ioc_extraction_status 判断哪些事件未处理，
+    重复运行不会重复增加 IOC count。
 
     Args:
         db_path: 数据库文件路径。
@@ -168,29 +172,43 @@ def extract_all_pending(db_path) -> int:
     Returns:
         int: 新增 IOC 数量。
     """
-    from app.db import get_connection, insert_ioc
+    from app.db import (
+        get_connection,
+        get_unprocessed_event_ids,
+        insert_ioc,
+        mark_ioc_extracted,
+    )
 
     conn = get_connection(db_path)
-    cursor = conn.cursor()
 
-    # 查找尚未提取 IOC 的事件
-    cursor.execute("""
-        SELECT n.* FROM normalized_events n
-        WHERE n.id NOT IN (
-            SELECT DISTINCT normalized_event_id FROM iocs
-            WHERE normalized_event_id IS NOT NULL
-        )
-        ORDER BY n.id ASC
-    """)
+    # 从 status 表获取未处理的事件 ID（幂等）
+    event_ids = get_unprocessed_event_ids(db_path)
+    if not event_ids:
+        logger.info("IOC 提取: 所有事件已处理, 无需提取")
+        return 0
+
+    # 批量查询事件
+    placeholders = ",".join("?" * len(event_ids))
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT * FROM normalized_events WHERE id IN ({placeholders}) ORDER BY id ASC",
+        event_ids,
+    )
     rows = cursor.fetchall()
 
     total_iocs = 0
     for row in rows:
         event = dict(row)
+        event_id = event["id"]
         iocs = extract_iocs(event)
+
+        # 逐个入库
         for ioc in iocs:
             insert_ioc(db_path, ioc)
             total_iocs += 1
+
+        # 无论提取出多少 IOC，都写入提取状态（幂等关键）
+        mark_ioc_extracted(db_path, event_id, len(iocs))
 
     logger.info("IOC 提取完成: %d 条事件 -> %d 个 IOC", len(rows), total_iocs)
     return total_iocs

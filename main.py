@@ -340,9 +340,16 @@ def cmd_correlate(args):
 
     from analyzers.correlator import correlate_all
     results = correlate_all(db_path)
+
+    rules = results.get("rules", {})
+    if not rules:
+        return  # 前置条件提示已在 correlate_all 中输出
+
     print(f"[INFO] 关联分析完成:")
-    for rule, count in results.items():
+    for rule, count in rules.items():
         print(f"  {rule}: 触发 {count} 次")
+    if results.get("profiles_recalculated", 0) > 0:
+        print(f"[INFO] 已重新计算 {results['profiles_recalculated']} 个 IP 的风险评分")
 
 
 def cmd_show_profile(args):

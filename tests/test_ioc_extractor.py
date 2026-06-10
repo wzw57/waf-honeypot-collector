@@ -6,11 +6,25 @@ import json
 
 import pytest
 
+from analyzers.correlator import correlate_all
 from analyzers.ioc_extractor import (
     _detect_ua_tool,
     _extract_filename,
     _get_extension,
+    extract_all_pending,
     extract_iocs,
+)
+from analyzers.profiler import build_all_profiles, build_profile
+from app.db import (
+    count_ioc_extraction_status,
+    get_connection,
+    get_profile_by_ip,
+    get_unprocessed_event_ids,
+    get_top_ips,
+    init_db,
+    insert_ioc,
+    insert_normalized_event,
+    mark_ioc_extracted,
 )
 
 
@@ -136,6 +150,90 @@ class TestExtractIocs:
         assert isinstance(iocs, list)
 
 
+    def test_url_protocol_http(self):
+        """HTTP 协议的 URL 应使用 http:// 前缀。"""
+        event = {"id": 1, "src_ip": "1.2.3.4", "host": "x.com",
+                 "uri": "/path", "source": "safeline", "protocol": "HTTP"}
+        iocs = extract_iocs(event)
+        urls = [i for i in iocs if i["ioc_type"] == "url"]
+        assert len(urls) == 1
+        assert urls[0]["ioc_value"].startswith("http://")
+
+    def test_url_protocol_https(self):
+        """HTTPS 协议的 URL 应使用 https:// 前缀。"""
+        event = {"id": 1, "src_ip": "1.2.3.4", "host": "secure.com",
+                 "uri": "/admin", "source": "safeline", "protocol": "HTTPS"}
+        iocs = extract_iocs(event)
+        urls = [i for i in iocs if i["ioc_type"] == "url"]
+        assert len(urls) == 1
+        assert urls[0]["ioc_value"].startswith("https://")
+
+    def test_url_protocol_unknown_defaults_http(self):
+        """未知协议的 URL 应默认使用 http://。"""
+        event = {"id": 1, "src_ip": "1.2.3.4", "host": "x.com",
+                 "uri": "/path", "source": "safeline", "protocol": "UNKNOWN"}
+        iocs = extract_iocs(event)
+        urls = [i for i in iocs if i["ioc_type"] == "url"]
+        assert len(urls) == 1
+        assert urls[0]["ioc_value"].startswith("http://")
+
+
+class TestIocIdempotency:
+    """测试 IOC 提取幂等性（使用真实 SQLite 数据库）。"""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        """提供一个已初始化的临时数据库，包含一条标准化事件。"""
+        db_file = str(tmp_path / "test.db")
+        init_db(db_file)
+
+        # 插入一条标准化事件
+        conn = get_connection(db_file)
+        cursor = conn.cursor()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cursor.execute("""
+            INSERT INTO normalized_events
+                (source, source_event_id, event_time, src_ip, src_port,
+                 protocol, http_method, host, uri, user_agent,
+                 attack_type, severity, payload, raw_table, raw_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, ("safeline", "evt_001", now, "10.0.0.1", 54321,
+              "HTTP", "GET", "target.com", "/admin.php", "sqlmap/1.7",
+              "SQL Injection", "high", "1' OR '1'='1",
+              "raw_safeline_logs", 1, now))
+        conn.commit()
+        return db_file
+
+    def test_first_run_extracts_iocs(self, db):
+        """首次运行应提取 IOC。"""
+        count = extract_all_pending(db)
+        assert count > 0
+
+        status = count_ioc_extraction_status(db)
+        assert status["events"] >= 1
+        assert status["iocs"] == count
+
+    def test_second_run_no_duplicate(self, db):
+        """第二次运行不应重复提取（IOC count 不变）。"""
+        first = extract_all_pending(db)
+        second = extract_all_pending(db)
+        assert second == 0  # 第二次无新事件
+
+    def test_mark_and_check_status(self, db):
+        """标记 IOC 提取状态后，不应再出现在未处理列表。"""
+        from app.db import get_unprocessed_event_ids, mark_ioc_extracted
+
+        # 处理前应有一个未处理
+        assert len(get_unprocessed_event_ids(db)) == 1
+
+        # 标记已处理
+        mark_ioc_extracted(db, 1, 5)
+
+        # 处理后应无未处理
+        assert len(get_unprocessed_event_ids(db)) == 0
+
+
 class TestHelperFunctions:
     """测试辅助函数。"""
 
@@ -148,3 +246,85 @@ class TestHelperFunctions:
         assert _extract_filename("/a/b/file.php") == "file.php"
         assert _extract_filename("/a/b/") is None
         assert _extract_filename("/a/b") is None
+
+
+class TestCorrelatePreconditions:
+    """测试关联分析前置条件。"""
+
+    def test_correlate_empty_profiles_returns_empty(self, tmp_path):
+        """没有画像时 correlate 应友好返回空结果。"""
+        db_file = str(tmp_path / "test.db")
+        init_db(db_file)
+
+        result = correlate_all(db_file)
+        assert result["rules"] == {}
+        assert result["profiles_recalculated"] == 0
+
+    def test_correlate_with_profiles_runs(self, tmp_path):
+        """有画像时 correlate 应正常执行。"""
+        db_file = str(tmp_path / "test.db")
+        init_db(db_file)
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        conn = get_connection(db_file)
+        cursor = conn.cursor()
+
+        # 插入一条 normalized_event
+        cursor.execute("""
+            INSERT INTO normalized_events
+                (source, source_event_id, event_time, src_ip, src_port,
+                 protocol, http_method, host, uri, user_agent,
+                 attack_type, severity, payload, raw_table, raw_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, ("safeline", "evt_002", now, "10.0.0.2", 12345,
+              "HTTP", "GET", "t.com", "/", "curl",
+              "Port Scan", "low", "",
+              "raw_safeline_logs", 1, now))
+        conn.commit()
+
+        # 先 build profiles
+        build_all_profiles(db_file)
+
+        result = correlate_all(db_file)
+        assert "rules" in result
+        assert isinstance(result["rules"], dict)
+
+    def test_tags_affect_risk_score(self, tmp_path):
+        """关联标签应最终影响风险评分。"""
+        db_file = str(tmp_path / "test.db")
+        init_db(db_file)
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        conn = get_connection(db_file)
+        cursor = conn.cursor()
+
+        # 插入一条带有高危 Payload 的事件
+        cursor.execute("""
+            INSERT INTO normalized_events
+                (source, source_event_id, event_time, src_ip, src_port,
+                 protocol, http_method, host, uri, user_agent,
+                 attack_type, severity, payload, raw_table, raw_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, ("safeline", "evt_003", now, "10.0.0.3", 12345,
+              "HTTP", "GET", "t.com", "/search", "sqlmap",
+              "SQL Injection", "high", "1' UNION SELECT * FROM users--",
+              "raw_safeline_logs", 1, now))
+        conn.commit()
+
+        # 构建画像（此时刚开始，risk_score 应为较低）
+        build_all_profiles(db_file)
+        profile_before = get_profile_by_ip(db_file, "10.0.0.3")
+        score_before = profile_before["risk_score"] if profile_before else 0
+
+        # 关联分析（应添加"高危 Payload"标签并重算评分）
+        correlate_all(db_file)
+        profile_after = get_profile_by_ip(db_file, "10.0.0.3")
+
+        assert profile_after is not None
+        assert "高危 Payload" in (profile_after.get("tags") or "")
+        # 重算后的 risk_score 应 >= 关联前的值
+        assert profile_after["risk_score"] >= profile_before["risk_score"]
