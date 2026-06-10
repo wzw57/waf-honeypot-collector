@@ -1,0 +1,77 @@
+# =============================================================================
+# WAF Honeypot Collector — 配置文件示例
+# 复制此文件为 config.yaml 并填入真实配置
+# cp config.yaml.example config.yaml
+# =============================================================================
+
+app:
+  name: "waf-honeypot-collector"
+  version: "1.0.0"
+  log_level: "INFO"           # DEBUG | INFO | WARNING | ERROR
+  log_dir: "logs"             # 日志文件存储目录
+  timezone: "Asia/Shanghai"   # 时区
+
+# SQLite 数据库配置
+database:
+  path: "data/collector.db"   # 数据库文件路径
+  backup_dir: "data/backups"  # 备份目录
+
+# =============================================================================
+# SafeLine 雷池 WAF 配置
+# 接入方式：UDP Syslog（被动接收）
+# =============================================================================
+safeline:
+  enabled: true               # 是否启用 SafeLine 采集
+  host: "0.0.0.0"            # Syslog 监听地址
+  port: 1514                  # Syslog 监听端口
+  buffer_size: 65536          # UDP 接收缓冲区大小（字节）
+  enable_normalization: true  # 是否自动标准化
+
+# =============================================================================
+# HFish 蜜罐配置
+# 接入方式：REST API（主动拉取）
+# =============================================================================
+hfish:
+  enabled: true               # 是否启用 HFish 采集
+  api_url: ""                 # HFish API 基础 URL，例如 http://192.168.1.100:5000
+  auth_type: "token"          # 认证方式：token | password
+  api_token: ""               # API Token（留空，从环境变量 HFISH_API_TOKEN 读取）
+  username: ""                # 登录用户名（auth_type=password 时使用）
+  password: ""                # 登录密码（留空，从环境变量 HFISH_PASSWORD 读取）
+  api_path: "/api/v1/attack"  # 攻击日志接口路径
+  interval: 60                # 循环拉取间隔（秒）
+  page_size: 100              # 每页拉取条数
+  enable_normalization: true  # 是否自动标准化
+
+# =============================================================================
+# 安全分析功能开关
+# =============================================================================
+ioc:
+  enabled: true               # 是否启用 IOC 提取
+
+profile:
+  enabled: true               # 是否启用攻击源画像
+
+correlation:
+  enabled: true               # 是否启用关联分析
+
+# =============================================================================
+# DeepSeek API 辅助分析（可选）
+# API Key 从环境变量 DEEPSEEK_API_KEY 读取
+# =============================================================================
+deepseek:
+  enabled: false              # 是否启用（默认关闭）
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"      # 模型名称
+  api_key_env: "DEEPSEEK_API_KEY"  # 环境变量名
+  timeout: 30                 # 请求超时（秒）
+  max_tokens: 1200            # 最大生成 Token 数
+
+# =============================================================================
+# Web Dashboard 配置（Phase 6+）
+# 默认仅监听 127.0.0.1，不直接暴露公网
+# =============================================================================
+web:
+  enabled: false              # 是否启用 Web Dashboard
+  host: "127.0.0.1"          # 监听地址
+  port: 8000                  # 监听端口

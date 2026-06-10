@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# 配置文件（含真实密钥）
+config.yaml
+
+# 数据库
+data/collector.db
+data/backups/
+
+# 日志
+logs/
+*.log
+
+# 报告输出
+reports/output/
+
+# OS
+.DS_Store
+Thumbs.db
