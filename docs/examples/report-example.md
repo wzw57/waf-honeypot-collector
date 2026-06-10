@@ -27,17 +27,12 @@
 
 ## 4. 攻击类型分布
 
-
-
 - **SQL Injection**：3 次
-
-
 
 ## 5. 攻击时间线
 
 | 时间 | 数据源 | 攻击类型 | 目标 |
 |------|--------|----------|------|
-
 
 | 2026-06-10T11:55:37Z | safeline | SQL Injection | /wp-admin/admin-ajax.php |
 
@@ -45,13 +40,10 @@
 
 | 2026-06-10T11:55:37Z | safeline | SQL Injection | /wp-admin/admin-ajax.php |
 
-
-
 ## 6. IOC 列表
 
 | 类型 | 值 | 首次出现 |
 |------|-----|----------|
-
 
 | ip | `10.0.0.1` | 2026-06-10T03:55:53Z |
 
@@ -75,23 +67,16 @@
 
 | suspicious_path | `/admin/login.php` | 2026-06-10T03:55:53Z |
 
-
-
 ## 7. ATT&CK 映射
 
 | 攻击行为 | 技术 ID | 技术名称 |
 |----------|---------|----------|
 
-
 | SQL 注入攻击 | T1190 | Exploit Public-Facing Application |
 
 | SQL 注入攻击 | T1190 | Exploit Public-Facing Application |
 
 | SQL 注入攻击 | T1190 | Exploit Public-Facing Application |
-
-
-
-
 
 ## 8. 处置建议
 

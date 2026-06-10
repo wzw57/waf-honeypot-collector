@@ -46,7 +46,9 @@ HFish 蜜罐  ──API───┘
 ### 安装 & 运行 (5 步)
 
 ```bash
-# 1. 安装依赖
+# 1. 创建 virtualenv 并安装依赖
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
 # 2. 配置
@@ -170,7 +172,8 @@ python main.py web                            # 启动 Web（127.0.0.1:8000）
 
 ## Web Dashboard
 
-![Dashboard 概览](docs/images/dashboard-overview.png)
+> 启动后访问 `http://127.0.0.1:8000` 即可查看 Dashboard 页面。
+> 截图待补充。
 
 | 页面 | 功能 |
 |------|------|
