@@ -2,23 +2,48 @@
 
 基于 SafeLine WAF 与 HFish 蜜罐的轻量级安全事件采集与关联分析平台。
 
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+---
+
 ## 项目简介
 
-对接 SafeLine（雷池 WAF）和 HFish（蜜罐）的安全日志，实现：
+对接 **SafeLine（雷池 WAF）** 和 **HFish（蜜罐）** 两类安全数据源，实现从日志采集、标准化、IOC 提取、攻击源画像、关联分析到报告生成的安全运营闭环。项目全栈使用 Python + SQLite，适合 **低配置 VPS（1 vCPU / 1GB RAM）** 部署。
 
-1. **日志采集** — Syslog 接收 WAF 日志，API 拉取蜜罐日志
-2. **原始保存** — 完整保留原始日志，支持溯源和重解析
-3. **事件标准化** — 将异构日志统一为标准事件格式
-4. **IOC 提取** — 自动化提取威胁情报指标
-5. **攻击源画像** — 按 IP 聚合攻击行为，构建攻击者画像
-6. **关联分析** — 识别多源命中、多阶段攻击
-7. **ATT&CK 映射** — 映射到 MITRE ATT&CK 框架
-8. **报告生成** — 输出结构化 Markdown 安全分析报告
-9. **AI 辅助研判**（可选）— 接入 DeepSeek API 生成分析摘要
+### 核心链路
+
+```
+SafeLine WAF ──Syslog──┐
+                        ├──→ 原始日志 → 标准化 → IOC提取 → 攻击画像 → 关联分析 → ATT&CK映射 → 报告
+HFish 蜜罐  ──API───┘
+```
+
+---
+
+## 功能特性
+
+| 类别 | 功能 | 说明 |
+|------|------|------|
+| 📥 采集 | SafeLine Syslog 接收 | UDP 1514，原始报文完整保留 |
+| 📥 采集 | HFish API 拉取 | 支持 Token/密码认证，自动去重 |
+| 🔄 处理 | 事件标准化 | 异构日志统一为标准化事件模型 |
+| 🎯 IOC | 威胁指标提取 | IP/URI/URL/Host/UA/Payload/敏感路径 |
+| 👤 画像 | 攻击源画像 | 按 IP 聚合，风险评分 + 标签 + 协议分布 |
+| 🔗 分析 | 关联分析 | 多源命中、多阶段攻击、扫描行为检测 |
+| 🗺️ 映射 | ATT&CK 映射 | 规则引擎映射 T1595/T1190/T1110/T1059 |
+| 📄 报告 | Markdown 报告 | 按 IP 生成含 IOC / ATT&CK / 处置建议的报告 |
+| 🤖 AI | DeepSeek 辅助 | 可选接入，生成摘要 / Payload 解释 |
+| 🌐 Web | Dashboard | FastAPI + Bootstrap 5 + ECharts 可视化 |
+| 🚀 部署 | systemd 托管 | 3 个服务文件，支持自动重启 |
+
+---
 
 ## 快速开始
 
-### 安装
+### 安装 & 运行 (5 步)
 
 ```bash
 # 1. 安装依赖
@@ -27,155 +52,245 @@ pip install -r requirements.txt
 # 2. 配置
 cp config.yaml.example config.yaml
 vim config.yaml
-```
 
-### Phase 1: SafeLine Syslog 接收
-
-```bash
 # 3. 初始化数据库
 python main.py init-db
 
-# 4. 启动 SafeLine Syslog 接收（前台阻塞）
+# 4. 启动 Syslog 接收
 python main.py recv-safeline
 
-# 5. 另一个终端使用 mock 工具发送测试日志
+# 5. 另一个终端发送测试日志
 python scripts/mock_syslog.py --count 5
-
-# 6. 查看入库日志
-python main.py show-latest --mode raw_safeline
-
-# 7. 查看统计
 python main.py stats
 ```
 
-### Phase 2: HFish 蜜罐接入与事件标准化
+---
+
+## 数据流
+
+```
+┌──────────┐   UDP Syslog    ┌──────────────┐
+│ SafeLine ├───────────────→ │              │
+│   WAF    │    :1514/udp   │              │
+└──────────┘                │  collectors/ │
+                            │              │   raw_safeline_logs
+┌──────────┐   REST API     │  safeline_   │ ────────────────→ ┌──────────┐
+│  HFish   ├───────────────→ │  syslog.py   │                  │  SQLite  │
+│  蜜罐     │   HTTP/JSON    │              │                  │  (data/  │
+└──────────┘                │  hfish_api.py │   raw_hfish_     │collector │
+                            │              │ ────────────────→ │  .db)    │
+                            └──────┬───────┘                  └──────────┘
+                                   │
+                                   ▼
+                            ┌──────────────┐
+                            │   parsers/   │
+                            │  safeline_   │
+                            │  parser.py   │
+                            │              │
+                            │   hfish_     │
+                            │  parser.py   │
+                            └──────┬───────┘
+                                   │
+                                   ▼
+                            ┌──────────────┐    normalized_events
+                            │  analyzers/  │ ──────────────────→ ┌──────────┐
+                            │  normalizer  │                     │  SQLite  │
+                            └──────┬───────┘                     └──────────┘
+                                   │
+                    ┌──────────────┼──────────────┐
+                    ▼              ▼              ▼
+             ┌──────────┐  ┌──────────┐  ┌────────────┐
+             │   IOC    │  │ 攻击源    │  │  关联分析   │
+             │  提取    │  │ 画像     │  │            │
+             └────┬─────┘  └────┬─────┘  └─────┬──────┘
+                  │             │              │
+                  ▼             ▼              ▼
+             ┌──────────┐  ┌──────────┐  ┌────────────┐
+             │  iocs    │  │attacker_ │  │  tags /    │
+             │  表      │  │profiles  │  │  is_multi  │
+             └──────────┘  └──────────┘  └────────────┘
+                                   │
+                                   ▼
+                            ┌──────────────┐    ┌────────────┐
+                            │  ATT&CK      │    │  Markdown  │
+                            │  映射        │───→│  报告      │
+                            └──────────────┘    └────────────┘
+```
+
+---
+
+## CLI 使用示例
+
+### 初始化与采集
 
 ```bash
-# 8. 单次拉取 HFish 攻击日志
-python main.py collect-hfish
-
-# 9. 循环拉取 HFish 日志（前台阻塞，默认间隔 60 秒）
-python main.py collect-hfish-loop
-
-# 10. 标准化待处理的原始日志
-python main.py normalize
-
-# 11. 查看标准化事件
-python main.py show-latest
-
-# 12. 按 IP 查询
-python main.py show-ip --ip 10.0.0.1
+python main.py init-db                       # 初始化数据库
+python main.py recv-safeline                  # 启动 Syslog 接收
+python main.py collect-hfish                  # 单次拉取 HFish
+python main.py collect-hfish-loop --interval 60  # 循环拉取
 ```
 
-### SafeLine WAF 配置
-
-在 SafeLine 管理界面配置 Syslog 转发：
-
-| 配置项 | 值 |
-|--------|-----|
-| 类型 | Syslog (UDP) |
-| 地址 | 你的 VPS IP |
-| 端口 | 1514 |
-
-### HFish 蜜罐配置
-
-在 `config.yaml` 中配置 HFish 接入信息：
-
-```yaml
-hfish:
-  enabled: true
-  api_url: "http://your-hfish-server:5000"
-  auth_type: token
-  api_token: ""               # 从环境变量 HFISH_API_TOKEN 读取
-  api_path: "/api/v1/attack"  # ⚠️ 随 HFish 版本可能变化
-  interval: 60
-```
-
-> **⚠️ 注意：** HFish API 的 `api_path` 在不同版本中可能不同。默认值 `/api/v1/attack` 基于常见版本，但不保证在所有版本中可用。
->
-> **建议：** 登录 HFish 后台，打开浏览器开发者工具（F12）→ Network 标签，找到攻击日志相关的 API 请求，确认实际路径后配置到 `api_path`。
->
-> 如果 HFish 启用了认证，请优先使用 Token 方式（`auth_type: token`），Token 设置到环境变量 `HFISH_API_TOKEN`。账号密码方式（`auth_type: password`）作为备选。
-
-### Mock 测试
+### 查看数据
 
 ```bash
-# 发送 10 条默认样本
-python scripts/mock_syslog.py --count 10
-
-# 指定目标地址和端口
-python scripts/mock_syslog.py --host 192.168.1.100 --port 1514
-
-# 控制发送间隔
-python scripts/mock_syslog.py --count 100 --interval 0.1
-
-# 发送无 JSON 的无效报文（测试解析失败不崩溃）
-python scripts/mock_syslog.py --count 3 --invalid
+python main.py stats                          # 统计概览
+python main.py show-latest                    # 最近事件
+python main.py show-latest --mode raw_safeline # 原始 Syslog
+python main.py show-ip --ip 10.0.0.1          # 按 IP 查询
 ```
 
-## CLI 命令
+### 分析
 
-### 已实现命令（Phase 0-2）
+```bash
+python main.py normalize                      # 标准化事件
+python main.py extract-ioc                    # 提取 IOC
+python main.py build-profiles                 # 构建画像
+python main.py correlate                      # 关联分析
+python main.py map-attack                     # ATT&CK 映射
+```
 
-| 命令 | 说明 |
+### 报告与 AI
+
+```bash
+python main.py show-profile --ip 10.0.0.1     # 查看画像
+python main.py top-ip                         # Top 攻击源
+python main.py report --ip 10.0.0.1           # 生成报告
+python main.py report --all --output reports/ # 生成全部报告
+python main.py ai-summary --ip 10.0.0.1       # AI 摘要（需配置 Key）
+python main.py report --ip 10.0.0.1 --with-ai # 报告集成 AI
+```
+
+### Web Dashboard
+
+```bash
+python main.py web                            # 启动 Web（127.0.0.1:8000）
+```
+
+---
+
+## Web Dashboard
+
+![Dashboard 概览](docs/images/dashboard-overview.png)
+
+| 页面 | 功能 |
 |------|------|
-| `init-db` | 初始化数据库 |
-| `recv-safeline` | 启动 SafeLine Syslog 接收 |
-| `show-latest` | 查看最近事件（支持 `--source`, `--mode` 筛选） |
-| `stats` | 查看扩展统计信息（含所有数据源） |
-| `collect-hfish` | 单次拉取 HFish 日志 |
-| `collect-hfish-loop` | 循环拉取 HFish 日志（`--interval` 指定间隔） |
-| `normalize` | 标准化待处理的原始日志（支持 `--source` 筛选） |
-| `show-ip --ip 1.2.3.4` | 按 IP 查询标准化事件 |
+| 概览 `/` | 统计卡片 + 数据源/风险等级饼图 |
+| 事件 `/events` | 标准化事件筛选与分页 |
+| Top IP `/top-ip` | 按事件数或风险评分排序 |
+| IP 详情 `/profile/{ip}` | 完整画像 + 时间线 + IOC |
+| IOC 列表 `/iocs` | 按类型筛选 |
+| 攻击类型 `/attack-types` | ECharts 饼图 |
+| 趋势 `/trends` | ECharts 折线图 |
+| 高风险 `/high-risk` | high/critical IP |
+| 报告 `/report/{ip}` | 在线查看报告 |
 
-### 规划中命令（后续 Phase）
+> **⚠️ 安全说明：** Dashboard 默认仅监听 `127.0.0.1`，不暴露公网。可通过 SSH 隧道访问：
+> ```bash
+> ssh -L 8000:127.0.0.1:8000 ubuntu@your-vps-ip
+> ```
 
-| 命令 | 说明 | 计划阶段 |
-|------|------|----------|
-| `collect-hfish` | 单次拉取 HFish 日志 | Phase 2 |
-| `collect-hfish-loop` | 循环拉取 HFish 日志 | Phase 2 |
-| `normalize` | 标准化事件 | Phase 3 |
-| `extract-ioc` | 提取 IOC | Phase 3 |
-| `build-profiles` | 构建攻击源画像 | Phase 3 |
-| `correlate` | 关联分析 | Phase 3 |
-| `map-attack` | ATT&CK 映射 | Phase 4 |
-| `report --ip 1.2.3.4` | 生成报告 | Phase 4 |
-| `ai-summary --ip 1.2.3.4` | AI 辅助研判 | Phase 5 |
-| `web` | 启动 Web Dashboard | Phase 6 |
-| `ai-summary --ip 1.2.3.4` | AI 辅助研判 | Phase 5 |
-| `web` | 启动 Web Dashboard | Phase 6 |
+> **CDN 依赖说明：** Dashboard 使用 CDN 加载 Bootstrap 5 / ECharts 5，如离线运行请替换为本地静态文件。
+
+---
 
 ## 项目结构
 
 ```
-├── main.py               # CLI 入口
-├── app/                   # 基础设施（config, db, logger, utils）
-├── collectors/            # 数据采集器
-├── parsers/               # 日志解析器
-├── analyzers/             # 分析引擎
-├── reports/               # 报告生成
-├── ai/                    # AI 辅助（可选）
-├── web/                   # Web Dashboard（可选）
-├── scripts/               # 辅助脚本（mock_syslog 等）
-├── tests/                 # 测试
-├── deploy/                # 部署配置
-└── docs/                  # 文档
+├── main.py                 # CLI 入口
+├── config.yaml.example     # 示例配置
+├── requirements.txt        # 依赖清单
+├── app/                    # 基础设施
+│   ├── config.py           # YAML 配置加载
+│   ├── db.py               # SQLite 操作封装
+│   ├── logger.py           # 日志配置
+│   └── utils.py            # 工具函数
+├── collectors/             # 数据采集
+│   ├── safeline_syslog.py  # SafeLine Syslog 接收
+│   └── hfish_api.py        # HFish API 客户端
+├── parsers/                # 日志解析
+│   ├── safeline_parser.py  # Syslog JSON 提取
+│   └── hfish_parser.py     # HFish 字段提取
+├── analyzers/              # 分析引擎
+│   ├── normalizer.py       # 事件标准化
+│   ├── normalizer_runner.py# 标准化执行器
+│   ├── ioc_extractor.py    # IOC 提取
+│   ├── profiler.py         # 攻击源画像
+│   ├── risk_scorer.py      # 风险评分
+│   ├── correlator.py       # 关联分析
+│   └── attack_mapper.py    # ATT&CK 映射
+├── ai/                     # AI 辅助
+│   ├── deepseek_client.py  # DeepSeek API 客户端
+│   └── prompts.py          # Prompt 模板
+├── reports/                # 报告生成
+│   ├── markdown_report.py  # Markdown 报告
+│   └── templates/          # Jinja2 模板
+├── web/                    # Web Dashboard
+│   ├── server.py           # FastAPI 应用
+│   ├── routes.py           # 路由
+│   ├── templates/          # 页面模板
+│   └── static/             # 静态文件
+├── scripts/                # 辅助脚本
+│   ├── mock_syslog.py      # Syslog 发送模拟
+│   └── backup_db.sh        # 数据库备份
+├── tests/                  # 测试（113 个）
+├── deploy/                 # systemd 服务文件
+└── docs/                   # 文档
 ```
+
+---
 
 ## 技术栈
 
-- Python 3.10+ / SQLite / YAML
-- requests / PyYAML / argparse
-- pytest / FastAPI（可选）/ Bootstrap（可选）
+| 类别 | 技术 | 用途 |
+|------|------|------|
+| 语言 | Python 3.10+ | 主开发语言 |
+| 数据库 | SQLite | 数据持久化（零依赖） |
+| 配置 | YAML | 配置文件 |
+| CLI | argparse | 命令行接口 |
+| 测试 | pytest | 单元测试（113 个） |
+| HTTP | requests | API 客户端 |
+| Web（可选） | FastAPI + Jinja2 + Bootstrap 5 | Web Dashboard |
+| 图表（可选） | ECharts 5 | Dashboard 可视化 |
+| AI（可选） | DeepSeek API | 辅助研判 |
+| 部署 | systemd | 服务托管 |
+
+---
 
 ## 安全声明
 
-- 本项目仅用于安全运营学习和授权环境下的攻击流量观测
-- 不进行主动漏洞扫描
-- 不进行自动封禁
-- 不提交真实配置和 API Key 到 Git
-- Web Dashboard 默认仅监听 127.0.0.1
+- ✅ 本项目仅用于 **安全运营学习** 和 **授权环境** 下的攻击流量观测
+- ✅ API Key / Token 从 **环境变量** 读取，不写入代码或配置文件
+- ✅ `config.yaml` 已被 `.gitignore` 排除，**不会提交 Git**
+- ✅ Web Dashboard 默认仅监听 `127.0.0.1`，**不直接暴露公网**
+- ❌ 不进行主动漏洞扫描
+- ❌ 不进行自动封禁
+- ❌ 不实现木马/免杀/攻击工具
 
-## License
+---
 
-MIT
+## 项目边界
+
+本项目 **不是** 完整商业 SOC / SIEM，以下功能不在范围内：
+
+- ❌ 多租户权限系统
+- ❌ 实时告警推送
+- ❌ 分布式部署
+- ❌ 自动响应/封禁
+- ❌ 大规模资产测绘
+- ❌ Docker 容器化（可选但非依赖）
+- ❌ ELK / Kafka / Redis 集成
+
+---
+
+## 许可证
+
+MIT License — 详见 [LICENSE](LICENSE) 文件。
+
+---
+
+## 参考链接
+
+- [SafeLine 雷池 WAF](https://github.com/chaitin/SafeLine)
+- [HFish 蜜罐](https://github.com/hacklcx/HFish)
+- [MITRE ATT&CK](https://attack.mitre.org/)
+- [DeepSeek API](https://platform.deepseek.com/)
