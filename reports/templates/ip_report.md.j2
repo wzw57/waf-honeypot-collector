@@ -1,0 +1,70 @@
+# 攻击源分析报告
+
+## 1. 摘要
+
+| 项目 | 值 |
+|------|-----|
+| **攻击源 IP** | {{ ip }} |
+| **风险评分** | {{ profile.risk_score }}/100 |
+| **风险等级** | {{ profile.risk_level }} |
+| **风险标签** | {{ tags_display }} |
+| **数据源命中** | {{ source_display }} |
+
+## 2. 时间信息
+
+| 项目 | 值 |
+|------|-----|
+| **首次出现** | {{ profile.first_seen }} |
+| **最近活跃** | {{ profile.last_seen }} |
+| **活跃时长** | {{ duration }} |
+
+## 3. 数据源命中
+
+| 数据源 | 事件数 |
+|--------|--------|
+| SafeLine WAF | {{ profile.safeline_count }} |
+| HFish 蜜罐 | {{ profile.hfish_count }} |
+
+## 4. 攻击类型分布
+
+{% for type_name, type_count in attack_types %}
+- **{{ type_name }}**：{{ type_count }} 次
+{% endfor %}
+
+## 5. 攻击时间线
+
+| 时间 | 数据源 | 攻击类型 | 目标 |
+|------|--------|----------|------|
+{% for ev in timeline %}
+| {{ ev.event_time }} | {{ ev.source }} | {{ ev.attack_type or '-' }} | {{ ev.uri or ev.protocol or '-' }} |
+{% endfor %}
+
+## 6. IOC 列表
+
+| 类型 | 值 | 首次出现 |
+|------|-----|----------|
+{% for ioc in iocs %}
+| {{ ioc.ioc_type }} | `{{ ioc.ioc_value }}` | {{ ioc.first_seen }} |
+{% endfor %}
+
+## 7. ATT&CK 映射
+
+| 攻击行为 | 技术 ID | 技术名称 |
+|----------|---------|----------|
+{% for m in attack_mappings %}
+| {{ m.attack_behavior }} | {{ m.technique_id }} | {{ m.technique_name }} |
+{% endfor %}
+
+## 8. 处置建议
+
+{{ remediation }}
+
+## 9. 原始事件索引
+
+- **SafeLine 原始日志 ID 列表**: {{ safeline_raw_ids }}
+- **HFish 原始事件 ID 列表**: {{ hfish_raw_ids }}
+
+---
+
+*报告生成时间: {{ generated_at }}*
+*数据来源: SafeLine WAF + HFish 蜜罐*

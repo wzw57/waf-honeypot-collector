@@ -730,6 +730,67 @@ def get_iocs(db_path, ioc_type=None, limit=100):
 
 
 # =============================================================================
+# ATT&CK 映射操作
+# =============================================================================
+
+
+def insert_attack_mapping(db_path, mapping_dict):
+    """
+    插入一条 ATT&CK 映射。
+
+    Args:
+        db_path: 数据库文件路径。
+        mapping_dict: 映射字典，包含 normalized_event_id, src_ip,
+                     attack_behavior, technique_id, technique_name,
+                     mapping_type, created_at。
+
+    Returns:
+        int: 记录 ID。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO attack_mappings
+            (normalized_event_id, src_ip, attack_behavior,
+             technique_id, technique_name, mapping_type, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            mapping_dict["normalized_event_id"],
+            mapping_dict["src_ip"],
+            mapping_dict["attack_behavior"],
+            mapping_dict["technique_id"],
+            mapping_dict["technique_name"],
+            mapping_dict.get("mapping_type", "rule"),
+            mapping_dict.get("created_at"),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_attack_mappings(db_path, limit=100):
+    """
+    查询 ATT&CK 映射列表。
+
+    Args:
+        db_path: 数据库文件路径。
+        limit: 返回条数。
+
+    Returns:
+        list[dict]: 映射列表。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM attack_mappings ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(r) for r in cursor.fetchall()]
+
+
+# =============================================================================
 # 攻击源画像操作
 # =============================================================================
 

@@ -435,6 +435,54 @@ def cmd_top_ip(args):
     print()
 
 
+def cmd_map_attack(args):
+    """执行 ATT&CK 映射。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    rebuild = args.rebuild
+
+    from analyzers.attack_mapper import map_all_pending
+    count = map_all_pending(db_path, rebuild=rebuild)
+    print(f"[INFO] ATT&CK 映射完成: 新增 {count} 条")
+
+
+def cmd_report(args):
+    """生成攻击源 Markdown 报告。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    ip = args.ip
+    output = args.output
+    all_ips = args.all
+
+    from reports.markdown_report import generate_report, generate_all_reports
+
+    if all_ips:
+        out_dir = output or "reports/output"
+        count = generate_all_reports(db_path, output_dir=out_dir)
+        print(f"[INFO] 已为 {count} 个 IP 生成报告，输出目录: {out_dir}")
+        return
+
+    if not ip:
+        print("[ERROR] 请指定 --ip 或使用 --all")
+        return
+
+    report = generate_report(db_path, ip)
+
+    if not report:
+        print(f"[INFO] IP {ip} 暂无数据，无法生成报告")
+        return
+
+    if output:
+        out_path = Path(output)
+        if out_path.is_dir():
+            safe_name = ip.replace(".", "_").replace(":", "_")
+            out_path = out_path / f"{safe_name}.md"
+        out_path.write_text(report, encoding="utf-8")
+        print(f"[INFO] 报告已保存: {out_path}")
+    else:
+        print(report)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="基于 WAF 与蜜罐的安全事件采集与关联分析平台",
@@ -465,6 +513,12 @@ def main():
     # 画像
     python main.py show-profile --ip 10.0.0.1
     python main.py top-ip
+
+    # 威胁映射与报告
+    python main.py map-attack
+    python main.py report --ip 10.0.0.1
+    python main.py report --ip 10.0.0.1 --output report.md
+    python main.py report --all
 
 更多命令将在后续 Phase 中添加。
         """,
@@ -557,6 +611,24 @@ def main():
         help="返回条数（默认: 10）",
     )
 
+    # --- Phase 4 ---
+    p_map = subparsers.add_parser("map-attack", help="执行 ATT&CK 映射")
+    p_map.add_argument(
+        "--rebuild", action="store_true",
+        help="重建全部映射",
+    )
+
+    p_report = subparsers.add_parser("report", help="生成攻击源 Markdown 报告")
+    p_report.add_argument("--ip", type=str, default=None, help="攻击源 IP")
+    p_report.add_argument(
+        "--output", type=str, default=None,
+        help="输出路径（文件或目录，默认输出到终端）",
+    )
+    p_report.add_argument(
+        "--all", action="store_true",
+        help="为所有已画像的 IP 生成报告",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -585,6 +657,8 @@ def main():
         "correlate": cmd_correlate,
         "show-profile": cmd_show_profile,
         "top-ip": cmd_top_ip,
+        "map-attack": cmd_map_attack,
+        "report": cmd_report,
     }
 
     try:
