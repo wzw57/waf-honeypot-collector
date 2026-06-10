@@ -47,15 +47,10 @@ cd waf-honeypot-collector
 ### 2.2 安装依赖
 
 ```bash
-# 使用 venv（推荐）
+# 创建 virtualenv（推荐，systemd 服务也使用该 venv）
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-
-# 或直接安装到系统
-pip install pyyaml requests jinja2 fastapi uvicorn aiofiles
-# 测试用（可选）
-pip install pytest
 ```
 
 ### 2.3 配置
@@ -112,11 +107,36 @@ python main.py stats
 | `HFISH_PASSWORD` | HFish 登录密码 | 如果用密码认证 |
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | 可选 |
 
+推荐通过 `EnvironmentFile` 统一管理：
+
+```bash
+# 创建环境变量文件
+sudo tee /etc/waf-honeypot-collector.env << 'EOF'
+HFISH_API_TOKEN=your-token-here
+HFISH_PASSWORD=your-password-here
+DEEPSEEK_API_KEY=your-key-here
+EOF
+
+# 安全权限（只有 root 和 ubuntu 可读）
+sudo chown root:ubuntu /etc/waf-honeypot-collector.env
+sudo chmod 640 /etc/waf-honeypot-collector.env
+```
+
+三个 systemd 服务均通过 `EnvironmentFile=-/etc/waf-honeypot-collector.env` 读取该文件。`-` 前缀表示文件不存在时不报错。
+
 ### 3.2 配置文件结构
 
 所有配置集中在 `config.yaml`，示例配置见 `config.yaml.example`。
 
-**配置生效后无需重启 systemd 服务**：重新执行 `python main.py <command>` 时自动读取最新配置。
+**配置变更说明：**
+
+- **手动 CLI**（`python main.py <command>`）：每次执行时自动读取最新 `config.yaml`，无需额外操作。
+- **systemd 服务**：修改 `config.yaml` 后**必须重启对应服务**才能生效：
+  ```bash
+  sudo systemctl restart waf-honeypot-safeline
+  sudo systemctl restart waf-honeypot-hfish
+  sudo systemctl restart waf-honeypot-web
+  ```
 
 ## 4. systemd 服务
 
@@ -139,30 +159,27 @@ sudo systemctl daemon-reload
 
 ### 4.2 设置环境变量
 
-HFish Token 和 DeepSeek API Key 通过环境变量注入，有两种方式：
-
-**方式 A：在 service 文件中设置（推荐）**
-
-编辑 `/etc/systemd/system/waf-honeypot-hfish.service`，在 `[Service]` 段添加：
-
-```ini
-Environment=HFISH_API_TOKEN=your-token-here
-```
-
-编辑 `/etc/systemd/system/waf-honeypot-web.service`：
-
-```ini
-Environment=DEEPSEEK_API_KEY=your-key-here
-```
-
-然后 `sudo systemctl daemon-reload`。
-
-**方式 B：写入 /etc/environment**
+建议使用 `EnvironmentFile` 统一管理（详见 [3.1 环境变量](#31-环境变量)）：
 
 ```bash
-echo 'HFISH_API_TOKEN=your-token-here' | sudo tee -a /etc/environment
-echo 'DEEPSEEK_API_KEY=your-key-here' | sudo tee -a /etc/environment
+# 创建后所有服务自动读取
+sudo tee /etc/waf-honeypot-collector.env << 'EOF'
+HFISH_API_TOKEN=your-token-here
+DEEPSEEK_API_KEY=your-key-here
+EOF
+sudo chmod 600 /etc/waf-honeypot-collector.env
 ```
+
+### 4.3 服务说明
+
+三个服务均使用以下配置：
+
+| 项目 | 值 |
+|------|-----|
+| Python | `venv/bin/python`（项目 virtualenv） |
+| 配置文件 | `--config` 显式指定 `config.yaml` |
+| 环境变量 | `EnvironmentFile=/etc/waf-honeypot-collector.env` |
+| 安全加固 | `NoNewPrivileges=true`、`PrivateTmp=true`、`ProtectSystem=full` |
 
 ## 5. 服务管理
 
@@ -241,12 +258,25 @@ crontab -e
 0 2 * * * sqlite3 /home/ubuntu/waf-honeypot-collector/data/collector.db ".backup '/home/ubuntu/waf-honeypot-collector/data/backups/collector_$(date +\%Y\%m\%d).db'"
 ```
 
-### 7.3 备份文件管理
+### 7.3 备份保留策略
 
-建议定期清理旧备份，例如保留 30 天：
+备份脚本内置自动清理功能，通过 `RETENTION_DAYS` 环境变量控制（默认 30 天）：
 
 ```bash
-find /home/ubuntu/waf-honeypot-collector/data/backups -name "*.db" -mtime +30 -delete
+# 使用默认保留 30 天
+bash scripts/backup_db.sh
+
+# 自定义保留 7 天
+RETENTION_DAYS=7 bash scripts/backup_db.sh
+
+# 保留 90 天且自动命名（供 crontab 使用）
+RETENTION_DAYS=90 bash scripts/backup_db.sh --auto
+```
+
+crontab 示例（每天备份，保留 30 天）：
+
+```bash
+0 2 * * * RETENTION_DAYS=30 /home/ubuntu/waf-honeypot-collector/scripts/backup_db.sh --auto
 ```
 
 ## 8. 常见问题

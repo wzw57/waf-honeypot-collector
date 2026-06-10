@@ -7,12 +7,19 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/waf-honeypot-collector
-ExecStart=/usr/bin/python3 /home/ubuntu/waf-honeypot-collector/main.py recv-safeline
+ExecStart=/home/ubuntu/waf-honeypot-collector/venv/bin/python main.py recv-safeline --config /home/ubuntu/waf-honeypot-collector/config.yaml
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/waf-honeypot-collector.env
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/ubuntu/waf-honeypot-collector/data /home/ubuntu/waf-honeypot-collector/logs
 
 [Install]
 WantedBy=multi-user.target

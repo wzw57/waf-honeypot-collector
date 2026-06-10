@@ -7,16 +7,19 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/waf-honeypot-collector
-ExecStart=/usr/bin/python3 /home/ubuntu/waf-honeypot-collector/main.py collect-hfish-loop
+ExecStart=/home/ubuntu/waf-honeypot-collector/venv/bin/python main.py collect-hfish-loop --config /home/ubuntu/waf-honeypot-collector/config.yaml
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 Environment=PYTHONUNBUFFERED=1
-# 请设置以下环境变量（或写入 /etc/environment）
-# Environment=HFISH_API_TOKEN=your-token-here
-# Environment=HFISH_PASSWORD=your-password-here
-# Environment=DEEPSEEK_API_KEY=your-key-here
+EnvironmentFile=-/etc/waf-honeypot-collector.env
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/ubuntu/waf-honeypot-collector/data /home/ubuntu/waf-honeypot-collector/logs
 
 [Install]
 WantedBy=multi-user.target
