@@ -312,6 +312,122 @@ def cmd_show_ip(args):
     print()
 
 
+def cmd_extract_ioc(args):
+    """提取 IOC。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+
+    from analyzers.ioc_extractor import extract_all_pending
+    total = extract_all_pending(db_path)
+    print(f"[INFO] IOC 提取完成: 共新增 {total} 个 IOC")
+
+
+def cmd_build_profiles(args):
+    """构建攻击源画像。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    rebuild = args.rebuild
+
+    from analyzers.profiler import build_all_profiles
+    count = build_all_profiles(db_path, rebuild=rebuild)
+    print(f"[INFO] 攻击源画像构建完成: {count} 个 IP")
+
+
+def cmd_correlate(args):
+    """执行关联分析。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+
+    from analyzers.correlator import correlate_all
+    results = correlate_all(db_path)
+    print(f"[INFO] 关联分析完成:")
+    for rule, count in results.items():
+        print(f"  {rule}: 触发 {count} 次")
+
+
+def cmd_show_profile(args):
+    """显示攻击源画像。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    ip = args.ip
+
+    from app.db import get_profile_by_ip, get_events_by_ip
+    profile = get_profile_by_ip(db_path, ip)
+
+    if not profile:
+        print(f"[INFO] IP {ip} 暂无画像数据")
+        return
+
+    print(f"\n{'='*60}")
+    print(f"  攻击源画像: {ip}")
+    print(f"{'='*60}")
+    print(f"  首次出现:      {profile['first_seen']}")
+    print(f"  最近活跃:      {profile['last_seen']}")
+    print(f"  事件总数:      {profile['total_count']}")
+    print(f"  ├─ SafeLine:   {profile['safeline_count']}")
+    print(f"  └─ HFish:     {profile['hfish_count']}")
+    print(f"  多源命中:      {'是' if profile['is_multi_source'] else '否'}")
+    print(f"  风险评分:      {profile['risk_score']}/100")
+    print(f"  风险等级:      {profile['risk_level']}")
+
+    tags = profile.get('tags')
+    if tags:
+        import json
+        try:
+            tag_list = json.loads(tags)
+            if tag_list:
+                print(f"  风险标签:      {', '.join(tag_list)}")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    attack_types = profile.get('attack_types')
+    if attack_types:
+        try:
+            at = json.loads(attack_types)
+            if at:
+                print(f"\n  攻击类型分布:")
+                for t, c in sorted(at.items(), key=lambda x: -x[1])[:5]:
+                    print(f"    {t}: {c} 次")
+        except (json.JSONDecodeError, TypeError):
+            pass
+    print("=" * 60)
+    print()
+
+
+def cmd_top_ip(args):
+    """显示 Top 攻击源 IP。"""
+    config = get_config(args.config)
+    db_path = config["database"]["path"]
+    sort_by = args.sort
+    limit = args.limit
+
+    from app.db import get_top_ips
+    ips = get_top_ips(db_path, sort_by=sort_by, limit=limit)
+
+    if not ips:
+        print("[INFO] 暂无画像数据")
+        return
+
+    print(f"\n{'='*90}")
+    print(f"  Top {len(ips)} 攻击源 IP（按 {sort_by} 排序）")
+    print(f"{'='*90}")
+    print(f"{'#':>3} | {'IP':<18} | {'事件数':>8} | {'多源':>4} | {'评分':>4} | {'等级':<10} | {'标签'}")
+    print("-" * 90)
+    for i, p in enumerate(ips, 1):
+        import json
+        tags = ""
+        try:
+            tag_list = json.loads(p['tags']) if p.get('tags') else []
+            tags = ", ".join(tag_list[:3])
+        except (json.JSONDecodeError, TypeError):
+            pass
+        multi = "✓" if p['is_multi_source'] else ""
+        print(f"{i:>3} | {p['src_ip']:<18} | {p['total_count']:>8} | {multi:>4} | "
+              f"{p['risk_score']:>4} | {p['risk_level']:<10} | {tags[:30]:<30}")
+    print("=" * 90)
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="基于 WAF 与蜜罐的安全事件采集与关联分析平台",
@@ -335,6 +451,13 @@ def main():
 
     # 分析
     python main.py normalize
+    python main.py extract-ioc
+    python main.py build-profiles
+    python main.py correlate
+
+    # 画像
+    python main.py show-profile --ip 10.0.0.1
+    python main.py top-ip
 
 更多命令将在后续 Phase 中添加。
         """,
@@ -402,6 +525,31 @@ def main():
 
     subparsers.add_parser("stats", help="显示扩展统计信息（含所有数据源）")
 
+    # --- Phase 3 ---
+    subparsers.add_parser("extract-ioc", help="从标准化事件中提取 IOC")
+
+    p_profiles = subparsers.add_parser("build-profiles", help="构建攻击源画像")
+    p_profiles.add_argument(
+        "--rebuild", action="store_true",
+        help="重建全部画像（清空已有数据）",
+    )
+
+    subparsers.add_parser("correlate", help="执行关联分析")
+
+    p_show_profile = subparsers.add_parser("show-profile", help="显示攻击源画像详情")
+    p_show_profile.add_argument("--ip", type=str, required=True, help="攻击源 IP")
+
+    p_top = subparsers.add_parser("top-ip", help="显示 Top 攻击源 IP")
+    p_top.add_argument(
+        "--sort", type=str, default="total_count",
+        choices=["total_count", "risk_score"],
+        help="排序字段（默认: total_count）",
+    )
+    p_top.add_argument(
+        "--limit", type=int, default=10,
+        help="返回条数（默认: 10）",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -425,6 +573,11 @@ def main():
         "collect-hfish-loop": cmd_collect_hfish_loop,
         "normalize": cmd_normalize,
         "show-ip": cmd_show_ip,
+        "extract-ioc": cmd_extract_ioc,
+        "build-profiles": cmd_build_profiles,
+        "correlate": cmd_correlate,
+        "show-profile": cmd_show_profile,
+        "top-ip": cmd_top_ip,
     }
 
     try:

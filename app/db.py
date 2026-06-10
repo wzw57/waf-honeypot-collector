@@ -633,3 +633,161 @@ def get_extended_stats(db_path):
             "source_distribution": source_dist,
         },
     }
+
+
+# =============================================================================
+# IOC 操作
+# =============================================================================
+
+
+def insert_ioc(db_path, ioc_dict):
+    """
+    插入一条 IOC（同 type+value 合并计数）。
+
+    Args:
+        db_path: 数据库文件路径。
+        ioc_dict: IOC 字典，包含 ioc_type, ioc_value, source, src_ip,
+                  normalized_event_id, first_seen, last_seen, context。
+
+    Returns:
+        int: 记录 ID（新插入或已有记录）。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO iocs
+            (ioc_type, ioc_value, source, src_ip, normalized_event_id,
+             first_seen, last_seen, count, context, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        ON CONFLICT(ioc_type, ioc_value) DO UPDATE SET
+            count = count + 1,
+            last_seen = excluded.last_seen
+        """,
+        (
+            ioc_dict["ioc_type"],
+            ioc_dict["ioc_value"],
+            ioc_dict.get("source", ""),
+            ioc_dict.get("src_ip"),
+            ioc_dict.get("normalized_event_id"),
+            ioc_dict.get("first_seen"),
+            ioc_dict.get("last_seen"),
+            ioc_dict.get("context"),
+            ioc_dict.get("first_seen"),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_iocs(db_path, ioc_type=None, limit=100):
+    """
+    查询 IOC 列表。
+
+    Args:
+        db_path: 数据库文件路径。
+        ioc_type: IOC 类型过滤（None 表示全部）。
+        limit: 返回条数。
+
+    Returns:
+        list[dict]: IOC 列表。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    if ioc_type:
+        cursor.execute(
+            "SELECT * FROM iocs WHERE ioc_type = ? ORDER BY count DESC, last_seen DESC LIMIT ?",
+            (ioc_type, limit),
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM iocs ORDER BY count DESC, last_seen DESC LIMIT ?",
+            (limit,),
+        )
+
+    return [dict(r) for r in cursor.fetchall()]
+
+
+# =============================================================================
+# 攻击源画像操作
+# =============================================================================
+
+
+def get_profile_by_ip(db_path, src_ip):
+    """
+    查询单个攻击源画像。
+
+    Args:
+        db_path: 数据库文件路径。
+        src_ip: 攻击源 IP。
+
+    Returns:
+        dict|None: 画像字典。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM attacker_profiles WHERE src_ip = ?", (src_ip,)
+    )
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def get_top_ips(db_path, sort_by="total_count", limit=10):
+    """
+    获取 Top 攻击源 IP。
+
+    Args:
+        db_path: 数据库文件路径。
+        sort_by: 排序字段（total_count / risk_score）。
+        limit: 返回条数。
+
+    Returns:
+        list[dict]: 画像列表。
+    """
+    allowed_sorts = {"total_count", "risk_score"}
+    if sort_by not in allowed_sorts:
+        sort_by = "total_count"
+
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT * FROM attacker_profiles ORDER BY {sort_by} DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(r) for r in cursor.fetchall()]
+
+
+def get_profile_stats(db_path):
+    """
+    获取画像统计信息。
+
+    Args:
+        db_path: 数据库文件路径。
+
+    Returns:
+        dict: 画像统计。
+    """
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) as cnt FROM attacker_profiles")
+    total_profiles = cursor.fetchone()["cnt"]
+
+    cursor.execute(
+        "SELECT risk_level, COUNT(*) as cnt FROM attacker_profiles GROUP BY risk_level"
+    )
+    level_dist = {r["risk_level"]: r["cnt"] for r in cursor.fetchall()}
+
+    cursor.execute(
+        "SELECT COUNT(*) as cnt FROM attacker_profiles WHERE is_multi_source = 1"
+    )
+    multi_source = cursor.fetchone()["cnt"]
+
+    return {
+        "total_profiles": total_profiles,
+        "level_distribution": level_dist,
+        "multi_source_count": multi_source,
+    }
