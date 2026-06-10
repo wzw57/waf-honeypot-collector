@@ -79,6 +79,7 @@ class ModSecurityCollector:
     ModSecurity 审计日志采集器。
 
     支持增量读取、state 持久化、logrotate 检测、SHA256 去重。
+    on_transaction 回调应返回 bool：True 表示真实插入，False 表示跳过/重复。
     """
 
     def __init__(self, audit_log_path: str, state_file: str,
@@ -88,16 +89,51 @@ class ModSecurityCollector:
         Args:
             audit_log_path: ModSecurity audit log 文件路径。
             state_file: state 文件路径。
-            read_from_end: 首次运行是否从文件末尾开始。
+            read_from_end: 仅在 state 不存在或无效时，首次读取是否从文件末尾开始。
             on_transaction: 每条 transaction 解析后的回调。
-                           回调签名: callback(parsed_result)
+                           回调签名: callback(parsed) -> bool
         """
         self.audit_log_path = audit_log_path
         self.state_file = state_file
         self.read_from_end = read_from_end
         self.on_transaction = on_transaction
         self.state_mgr = ModSecurityFileState(state_file)
-        self._first_run = True
+
+    def _resolve_start_offset(self, state: dict,
+                               finfo: dict) -> int:
+        """
+        确定本次读取的起始 offset。
+
+        规则：
+        1. 如果 state 存在且有效（inode 匹配、offset ≤ 文件大小、未 logrotate），
+           从 prev_offset 继续读取；
+        2. 如果 logrotate，按 read_from_end 策略处理；
+        3. 如果 state 不存在或无效（首次运行），按 read_from_end 策略处理。
+        """
+        prev_inode = state.get("inode")
+        prev_offset = state.get("offset", 0)
+
+        # 检测 logrotate
+        if prev_inode is not None and prev_inode != finfo["inode"]:
+            logger.info("检测到 logrotate: inode %s → %s", prev_inode, finfo["inode"])
+            return finfo["size"] if self.read_from_end else 0
+        if prev_offset and finfo["size"] < prev_offset:
+            logger.info("文件变小，疑似 logrotate: offset %s → size %s",
+                        prev_offset, finfo["size"])
+            return finfo["size"] if self.read_from_end else 0
+
+        # state 有效且无 logrotate → 从 prev_offset 继续
+        if state and prev_offset is not None and prev_offset >= 0:
+            logger.debug("从 state offset 继续读取: %d", prev_offset)
+            return prev_offset
+
+        # state 不存在或无效 → 按 read_from_end 策略
+        if self.read_from_end:
+            logger.info("首次运行（无有效 state），从文件末尾开始")
+            return finfo["size"]
+        else:
+            logger.info("首次运行（无有效 state），从文件开头开始")
+            return 0
 
     def collect_once(self) -> Dict[str, Any]:
         """
@@ -114,38 +150,7 @@ class ModSecurityCollector:
             return result
 
         state = self.state_mgr.load()
-        prev_inode = state.get("inode")
-        prev_offset = state.get("offset", 0)
-
-        # 检测 logrotate：inode 变化或文件变小
-        logrotated = False
-        if prev_inode is not None and prev_inode != finfo["inode"]:
-            logrotated = True
-            logger.info("检测到 logrotate: inode %s → %s", prev_inode, finfo["inode"])
-        if prev_offset and finfo["size"] < prev_offset:
-            logrotated = True
-            logger.info("文件变小，疑似 logrotate: offset %s → size %s",
-                        prev_offset, finfo["size"])
-
-        if logrotated:
-            # logrotate 后重新决定读取起点
-            if self.read_from_end:
-                offset = finfo["size"]
-                logger.info("logrotate 后从文件末尾开始")
-            else:
-                offset = 0
-                logger.info("logrotate 后从文件开头开始")
-        elif self._first_run:
-            # 首次运行
-            if self.read_from_end:
-                offset = finfo["size"]
-                logger.info("首次运行，从文件末尾开始 (offset=%d)", offset)
-            else:
-                offset = 0
-                logger.info("首次运行，从文件开头开始")
-            self._first_run = False
-        else:
-            offset = prev_offset if prev_offset else 0
+        offset = self._resolve_start_offset(state, finfo)
 
         # 如果 offset >= 文件大小，没有新数据
         if offset >= finfo["size"]:
@@ -174,15 +179,17 @@ class ModSecurityCollector:
 
         for trans_text in transactions:
             parsed = parse_transaction(trans_text)
-            # 计算 raw_hash 去重
             raw_hash = hashlib.sha256(trans_text.encode("utf-8")).hexdigest()
             parsed["_raw_hash"] = raw_hash
             parsed["_raw_text"] = trans_text
 
             if self.on_transaction:
                 try:
-                    self.on_transaction(parsed)
-                    result["inserted"] += 1
+                    inserted = self.on_transaction(parsed)
+                    if inserted:
+                        result["inserted"] += 1
+                    else:
+                        result["skipped"] += 1
                 except Exception as e:
                     logger.error("transaction 回调失败: %s", e)
                     result["skipped"] += 1
@@ -222,7 +229,6 @@ class ModSecurityCollector:
             except Exception as e:
                 logger.error("ModSecurity 采集异常: %s", e)
 
-            # 等待，每秒检查 running 标志
             for _ in range(interval):
                 if not running:
                     break

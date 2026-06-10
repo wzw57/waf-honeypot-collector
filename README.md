@@ -277,12 +277,12 @@ ssh -L 8000:127.0.0.1:8000 ubuntu@YOUR_VPS_IP
 │   ├── logger.py           # 日志配置
 │   └── utils.py            # 工具函数
 ├── collectors/             # 数据采集
-│   ├── modsecurity_parser.py # ModSecurity audit log 解析
 │   ├── modsecurity_collector.py # ModSecurity 文件采集
 │   └── hfish_api.py        # HFish API 客户端
 ├── parsers/                # 日志解析
 │   ├── safeline_parser.py  # Syslog JSON 提取
-│   └── hfish_parser.py     # HFish 字段提取
+│   ├── hfish_parser.py     # HFish 字段提取
+│   └── modsecurity_parser.py  # ModSecurity audit log 解析
 ├── analyzers/              # 分析引擎
 │   ├── normalizer.py       # 事件标准化
 │   ├── normalizer_runner.py# 标准化执行器

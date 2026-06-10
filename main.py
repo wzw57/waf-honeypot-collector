@@ -568,11 +568,11 @@ def cmd_collect_modsecurity(args):
     from app.db import init_db, insert_raw_waf_log
     init_db(db_path)
 
-    def on_transaction(parsed):
+    def on_transaction(parsed) -> bool:
         raw_text = parsed.pop("_raw_text", "")
         raw_hash = parsed.pop("_raw_hash", "")
         import json as _json
-        insert_raw_waf_log(
+        row_id = insert_raw_waf_log(
             db_path,
             source="modsecurity",
             raw_message=raw_text,
@@ -580,6 +580,7 @@ def cmd_collect_modsecurity(args):
             event_time=parsed.get("timestamp"),
             parsed_json=_json.dumps(parsed, ensure_ascii=False),
         )
+        return row_id is not None
 
     collector = ModSecurityCollector(
         audit_log_path=audit_log_path,
@@ -616,11 +617,11 @@ def cmd_collect_modsecurity_loop(args):
     from app.db import init_db, insert_raw_waf_log
     init_db(db_path)
 
-    def on_transaction(parsed):
+    def on_transaction(parsed) -> bool:
         raw_text = parsed.pop("_raw_text", "")
         raw_hash = parsed.pop("_raw_hash", "")
         import json as _json
-        insert_raw_waf_log(
+        row_id = insert_raw_waf_log(
             db_path,
             source="modsecurity",
             raw_message=raw_text,
@@ -628,6 +629,7 @@ def cmd_collect_modsecurity_loop(args):
             event_time=parsed.get("timestamp"),
             parsed_json=_json.dumps(parsed, ensure_ascii=False),
         )
+        return row_id is not None
 
     collector = ModSecurityCollector(
         audit_log_path=audit_log_path,
@@ -805,7 +807,7 @@ def main():
     p_normalize = subparsers.add_parser("normalize", help="标准化待处理的原始日志")
     p_normalize.add_argument(
         "--source", type=str, default=None,
-        choices=["safeline", "hfish"],
+        choices=["safeline", "hfish", "modsecurity"],
         help="仅标准化指定数据源（默认全部）",
     )
 
@@ -818,7 +820,7 @@ def main():
     p_latest.add_argument("--limit", type=int, default=20, help="显示条数（默认: 20）")
     p_latest.add_argument(
         "--source", type=str, default=None,
-        choices=["safeline", "hfish"],
+        choices=["safeline", "hfish", "modsecurity"],
         help="按数据源过滤（仅标准化事件模式）",
     )
     p_latest.add_argument(
