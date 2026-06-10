@@ -9,7 +9,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 # Section 行正则: --<transaction_id>-<section>--
-SECTION_HEADER_RE = re.compile(r"^--([a-fA-F0-9]+)-([A-Z])--$")
+SECTION_HEADER_RE = re.compile(r"^--([^-]+)-([A-Z])--$")
 
 # A 段：时间戳和连接信息
 # 格式: [10/Jun/2026:13:50:01 +0800] <unique_id> <client_ip> <client_port> <server_ip> <server_port>

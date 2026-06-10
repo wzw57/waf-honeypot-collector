@@ -7,7 +7,7 @@
 # 在目标目录执行（脚本会自动复制到 APP_DIR）：
 #   cd /opt/waf-honeypot-collector
 #   git pull
-#   bash scripts/deploy_vps.sh
+#   sudo bash scripts/deploy_vps.sh
 #
 # 环境变量（均可覆盖）:
 #   APP_DIR       — 项目安装目录（默认 /opt/waf-honeypot-collector）
@@ -235,7 +235,8 @@ info "  ssh -L 8000:127.0.0.1:8000 ${APP_USER}@YOUR_VPS_IP"
 info "  然后浏览器访问: http://127.0.0.1:8000"
 echo ""
 warn "安全注意事项:"
-warn "  - SafeLine 真实接入需要云安全组和防火墙放行 UDP 1514"
+warn "  - SafeLine 跨主机 Syslog 接入时，需云安全组和防火墙放行 UDP 1514"
+warn "    同机部署可优先使用 Docker 宿主机网关地址"
 warn "  - HFish 未自动启动，单独配置后手动启用"
 warn "  - 编辑 $ENV_FILE 填入真实 Token / API Key"
 warn "  - Web Dashboard 默认仅监听 127.0.0.1，不直接暴露公网"

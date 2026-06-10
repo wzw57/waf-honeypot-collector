@@ -137,6 +137,27 @@ class TestParseTransaction:
         assert result["client_ip"] is None
         assert result["blocked"] is False
 
+    def test_non_hex_transaction_id(self):
+        """非 hex transaction id 应正确分割和解析。"""
+        text = """--abcXYZ_123-A--
+[10/Jun/2026:13:50:01 +0800] xyz 1.2.3.4 12345 10.0.0.1 80
+--abcXYZ_123-B--
+GET /?id=1 HTTP/1.1
+Host: example.com
+--abcXYZ_123-F--
+HTTP/1.1 403 Forbidden
+--abcXYZ_123-H--
+[id "942100"] [msg "test"]
+Action: Intercepted
+--abcXYZ_123-Z--
+"""
+        result = parse_transaction(text)
+        assert result["transaction_id"] == "abcXYZ_123"
+        assert result["client_ip"] == "1.2.3.4"
+        assert result["method"] == "GET"
+        assert result["rule_id"] == "942100"
+        assert result["blocked"] is True
+
 
 class TestInferAttackType:
     """测试攻击类型推断。"""

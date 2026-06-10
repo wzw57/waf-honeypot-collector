@@ -258,7 +258,8 @@ ssh -L 8000:127.0.0.1:8000 ubuntu@YOUR_VPS_IP
 
 ### 安全注意事项
 
-- 🛡️ **SafeLine 真实接入**需要云安全组和系统防火墙放行 **UDP 1514** 端口
+- 🛡️ **SafeLine 跨主机 Syslog 接入**时，需要在云安全组和系统防火墙放行 **UDP 1514** 端口；同机 Docker 部署可优先使用 Docker 宿主机网关地址（如 `172.17.0.1`）作为 Syslog 目标
+- 🛡️ 如果使用 **ModSecurity + OWASP CRS**（不依赖 SafeLine License），则无需 Syslog 端口放行
 - 🛡️ **HFish** 未在部署脚本中自动启动，需单独配置后手动 `systemctl start waf-honeypot-hfish`
 - 🛡️ **Web Dashboard** 默认仅监听 `127.0.0.1`，不直接暴露公网
 - 🛡️ 编辑 `/etc/waf-honeypot-collector.env` 填入真实 Token / API Key
